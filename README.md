@@ -42,6 +42,7 @@ Robot, Chispa, Burbuja o Gato, en seis colores. Respiran, parpadean y muestran e
 - Música (Spotify, navegador…) con carátula, barra de progreso y botones animados.
 - Notificaciones de Windows (WhatsApp, Discord, correo…) unos segundos; clic para descartar.
 - Barra al cambiar el volumen o el brillo.
+- Avisos al conectar el cargador, auriculares o una memoria USB (clic para abrirla).
 - Clima junto al reloj y tu próxima cita del calendario de Windows, con aviso 10 minutos antes.
 - Reloj, fecha, batería en laptops; CPU y RAM en PCs de escritorio.
 - Temporizador: rueda del mouse = minutos, clic = iniciar/parar.
@@ -49,8 +50,9 @@ Robot, Chispa, Burbuja o Gato, en seis colores. Respiran, parpadean y muestran e
 
 **Uso**
 - Pasa el mouse para expandir.
+- Gestos sobre la música: desliza para cambiar de canción, doble clic para abrir la app que suena. La rueda del mouse cambia el volumen (sobre el temporizador, los minutos).
 - Mostrar u ocultar: clic en el robot de la bandeja de Windows o **Ctrl+Alt+I**. Oculta, los permisos se responden en la terminal.
-- Clic derecho: apariencia, personaje, modo, qué mostrar, ocultar en pantalla completa, iniciar con Windows, actualizaciones, salir.
+- **Ajustes** (clic derecho → Ajustes…, o desde la bandeja): personaje con vista previa, colores, modo, tamaño, en qué pantalla aparece (también puede seguir al mouse) y qué mostrar. Los cambios se ven al instante.
 - La isla nunca te saca de la aplicación en la que estás.
 
 ## Privacidad

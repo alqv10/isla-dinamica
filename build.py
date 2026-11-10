@@ -24,7 +24,7 @@ def main():
     pyinstaller("--name", "IslaDinamica", "--icon", str(HERE / "icono.ico"),
                 "--collect-submodules", "winrt", "--collect-all", "screen_brightness_control",
                 "--hidden-import", "pystray._win32", "--hidden-import", "claude_hook",
-                "--hidden-import", "install_hooks", str(HERE / "app.py"))
+                "--hidden-import", "install_hooks", "--hidden-import", "ajustes", str(HERE / "app.py"))
     zip_base = BUILD / "IslaDinamica"
     shutil.make_archive(str(zip_base), "zip", DIST / "IslaDinamica")
     pyinstaller("--onefile", "--name", "IslaDinamica-Setup", "--icon", str(HERE / "icono.ico"),

@@ -50,11 +50,13 @@ SMALL, BIG, PERM = (230, 34), (480, 214), (520, 44)  # en px lógicos (a 100 % d
 LEVEL, NOTIF = (300, 40), (440, 64)  # barra de volumen/brillo y notificación
 BIG_COMPANION = (480, 118)  # abierta sin tarjeta de Claude Code: música, clima y calendario
 CONFIG = Path.home() / ".isla-dinamica.json"
-VERSION = "1.1.0"
+VERSION = "1.2.0"
 REPO = "alqv10/isla-dinamica"
 DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications": True, "accent": "#3ddc84",
             "translucent": False, "weather": True, "calendar": True, "updates": True, "reply": True,
-            "character": "robot", "body": "#f2f2f2", "mode": "claude"}  # mode: "claude" | "companion"
+            "character": "robot", "body": "#f2f2f2",
+            "mode": "claude",  # "claude" | "companion"
+            "monitor": "primary"}  # "primary", "mouse" o el nombre de una pantalla, como \\.\DISPLAY2
 ACCENTS = [("Verde", "#3ddc84"), ("Morado", "#a78bfa"), ("Azul", "#4cc2ff"), ("Naranja", "#ff9f43"),
            ("Rosa", "#ff6b9d")]
 REPLY_GRACE = 6  # s que la isla ofrece "Responder" cuando Claude termina (el turno espera ese rato)
@@ -124,6 +126,7 @@ class Media:
         self.pos = self.end = 0.0  # segundos
         self.stamp = time.time()  # cuándo se leyó pos
         self.art, self.art_key = None, None  # bytes de la carátula y (título, artista) al que pertenece
+        self.app = ""
         self.loop = asyncio.new_event_loop()
         threading.Thread(target=self.loop.run_forever, daemon=True).start()
         if MediaManager:
@@ -138,6 +141,7 @@ class Media:
                 if s:
                     p = await s.try_get_media_properties_async()
                     self.title, self.artist = p.title, p.artist
+                    self.app = s.source_app_user_model_id  # quién suena (Spotify.exe, chrome.exe…)
                     self.playing = s.get_playback_info().playback_status == PLAYING
                     t = s.get_timeline_properties()
                     pos = t.position.total_seconds()
@@ -194,31 +198,59 @@ class Levels:
     """Volumen y brillo: cuando cambian, la isla muestra una barra un par de segundos."""
     def __init__(self):
         self.kind, self.value, self.muted, self.until = "vol", 0, False, 0
+        self.pending, self.wake = 0.0, threading.Event()  # cambio de volumen pedido desde la isla (rueda)
+        self.output, self.device_changed, self.device_event = "", False, None  # salida de audio actual
         threading.Thread(target=self.volume, daemon=True).start()
         threading.Thread(target=self.brightness, daemon=True).start()
 
     def show(self, kind, value, muted=False):
         self.kind, self.value, self.muted, self.until = kind, value, muted, time.time() + 1.8
 
+    def nudge(self, delta):
+        """Sube/baja el volumen (lo aplica el hilo de audio: COM no se comparte entre hilos)."""
+        self.pending += delta
+        self.wake.set()
+
     def volume(self):
         try:
             import comtypes
+            from pycaw.callbacks import MMNotificationClient
             from pycaw.pycaw import AudioUtilities
             comtypes.CoInitialize()
         except ImportError:
             return
+        levels = self
+
+        class Watch(MMNotificationClient):  # Windows avisa cuando cambia la salida (parlantes <-> auriculares)
+            def on_default_device_changed(self, flow, flow_id, role, role_id, device_id):
+                if flow == "eRender" and role == "eConsole":
+                    levels.device_changed = True
+                    levels.wake.set()
+        watch = Watch()
+        try:
+            AudioUtilities.GetDeviceEnumerator().RegisterEndpointNotificationCallback(watch)
+        except (OSError, comtypes.COMError):
+            pass  # sin avisos: igual se relee el dispositivo cada minuto
         last, ep, ep_at = None, None, 0
         while True:
             try:
-                if time.time() - ep_at > 15:  # releer el dispositivo por si cambiaste de parlantes a auriculares
-                    ep, ep_at = AudioUtilities.GetSpeakers().EndpointVolume, time.time()
+                if self.device_changed or time.time() - ep_at > 60:
+                    dev = AudioUtilities.GetSpeakers()
+                    ep, ep_at = dev.EndpointVolume, time.time()
+                    if self.device_changed and dev.FriendlyName != self.output:
+                        self.device_event = dev.FriendlyName  # la isla lo muestra en una tarjeta
+                    self.output, self.device_changed = dev.FriendlyName, False
+                if self.pending:
+                    delta, self.pending = self.pending, 0.0
+                    ep.SetMasterVolumeLevelScalar(clamp(ep.GetMasterVolumeLevelScalar() + delta), None)
                 now = (round(ep.GetMasterVolumeLevelScalar() * 100), bool(ep.GetMute()))
-                if last is not None and now != last:
+                if last is not None and now != last and not self.device_event:
                     self.show("vol", *now)
                 last = now
             except (OSError, comtypes.COMError, AttributeError):
                 ep_at = 0  # sin dispositivo de audio por ahora
-            time.sleep(0.1)
+            self.wake.wait(0.1)
+            self.wake.clear()
 
     def brightness(self):
         try:
@@ -400,10 +432,9 @@ class PROCESSENTRY32(ctypes.Structure):
                 ("exe", ctypes.c_char * 260)]
 
 
-def focus_terminal(pid):
-    """Trae al frente la ventana de la terminal donde corre una sesión: sube por los procesos padre del
-    hook hasta uno con ventana; si la cadena se corta (apps tipo Electron), busca por nombre del programa."""
-    k, u = ctypes.windll.kernel32, ctypes.windll.user32
+def processes():
+    """({pid: pid del padre}, {pid: nombre del .exe en minúsculas})"""
+    k = ctypes.windll.kernel32
     k.CreateToolhelp32Snapshot.restype = ctypes.c_void_p
     snap = ctypes.c_void_p(k.CreateToolhelp32Snapshot(2, 0))  # TH32CS_SNAPPROCESS
     e, parent, exe = PROCESSENTRY32(), {}, {}
@@ -413,7 +444,12 @@ def focus_terminal(pid):
         parent[e.pid], exe[e.pid] = e.ppid, e.exe.decode(errors="replace").lower()
         ok = k.Process32Next(snap, ctypes.byref(e))
     k.CloseHandle(snap)
-    windows = {}  # pid -> ventana principal visible
+    return parent, exe
+
+
+def app_windows():
+    """{pid: ventana principal visible} de las apps abiertas."""
+    u, windows = ctypes.windll.user32, {}
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
     def each(hwnd, _):
@@ -423,6 +459,22 @@ def focus_terminal(pid):
             windows.setdefault(owner.value, hwnd)
         return True
     u.EnumWindows(each, 0)
+    return windows
+
+
+def bring_to_front(hwnd):
+    u = ctypes.windll.user32
+    u.keybd_event(0x12, 0, 0, 0)  # Alt: Windows deja cambiar el foco solo tras una tecla
+    u.keybd_event(0x12, 0, 2, 0)
+    if u.IsIconic(hwnd):
+        u.ShowWindow(hwnd, 9)  # SW_RESTORE
+    u.SetForegroundWindow(hwnd)
+
+
+def focus_terminal(pid):
+    """Trae al frente la ventana de la terminal donde corre una sesión: sube por los procesos padre del
+    hook hasta uno con ventana; si la cadena se corta (apps tipo Electron), busca por nombre del programa."""
+    (parent, exe), windows = processes(), app_windows()
     chain = []
     while pid and pid not in chain:
         chain.append(pid)
@@ -435,12 +487,64 @@ def focus_terminal(pid):
             break
         hwnd = next((h for q, h in windows.items() if exe.get(q) == exe.get(p) and exe.get(p)), None)
     if hwnd:
-        u.keybd_event(0x12, 0, 0, 0)  # Alt: Windows deja cambiar el foco solo tras una tecla
-        u.keybd_event(0x12, 0, 2, 0)
-        if u.IsIconic(hwnd):
-            u.ShowWindow(hwnd, 9)  # SW_RESTORE
-        u.SetForegroundWindow(hwnd)
+        bring_to_front(hwnd)
     return bool(hwnd)
+
+
+def focus_app(app_id):
+    """Abre la app que está sonando: su ventana si está abierta (Spotify.exe, chrome.exe…), o la lanza
+    por su identificador de Windows (apps de la Tienda)."""
+    if not app_id:
+        return False
+    name = app_id.lower() if app_id.lower().endswith(".exe") else app_id.split("!")[0].lower() + ".exe"
+    (_, exe), windows = processes(), app_windows()
+    hwnd = next((h for pid, h in windows.items() if exe.get(pid) == name), None)
+    if hwnd:
+        bring_to_front(hwnd)
+        return True
+    try:
+        os.startfile("shell:AppsFolder\\" + app_id)
+        return True
+    except OSError:
+        return False
+
+
+class MONITORINFOEX(ctypes.Structure):
+    _fields_ = [("size", wintypes.DWORD), ("monitor", wintypes.RECT), ("work", wintypes.RECT),
+                ("flags", wintypes.DWORD), ("device", ctypes.c_wchar * 32)]
+
+
+def monitors():
+    """Pantallas conectadas: [{"name", "x", "y", "w", "scale", "primary"}] (escala = DPI de esa pantalla / 96)."""
+    u, out = ctypes.windll.user32, []
+
+    @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
+    def each(h, _hdc, _rect, _):
+        mi = MONITORINFOEX()
+        mi.size = ctypes.sizeof(mi)
+        u.GetMonitorInfoW(h, ctypes.byref(mi))
+        dpi, _y = wintypes.UINT(96), wintypes.UINT()
+        try:
+            ctypes.windll.shcore.GetDpiForMonitor(h, 0, ctypes.byref(dpi), ctypes.byref(_y))
+        except OSError:
+            pass
+        r = mi.monitor
+        out.append({"name": mi.device, "x": r.left, "y": r.top, "w": r.right - r.left, "h": r.bottom - r.top,
+                    "scale": dpi.value / 96, "primary": bool(mi.flags & 1)})
+        return True
+    u.EnumDisplayMonitors(None, None, each, 0)
+    return out
+
+
+def pick_monitor(mons, choice, pointer):
+    """La pantalla para la isla: la principal, la del mouse, o una elegida por nombre (si sigue conectada)."""
+    if choice == "mouse":
+        px, py = pointer
+        for m in mons:
+            if m["x"] <= px < m["x"] + m["w"] and m["y"] <= py < m["y"] + m["h"]:
+                return m
+    named = next((m for m in mons if m["name"] == choice), None)
+    return named or next((m for m in mons if m["primary"]), mons[0] if mons else None)
 
 
 def fullscreen():
@@ -448,6 +552,22 @@ def fullscreen():
     state = ctypes.c_int()
     ctypes.windll.shell32.SHQueryUserNotificationState(ctypes.byref(state))
     return state.value in (2, 3, 4)  # QUNS_BUSY, QUNS_RUNNING_D3D_FULL_SCREEN, QUNS_PRESENTATION_MODE
+
+
+def removable_drives():
+    """{"E": "Kingston"} de las memorias USB / tarjetas SD con algo adentro."""
+    k, out = ctypes.windll.kernel32, {}
+    mask = k.GetLogicalDrives()
+    for i in range(26):
+        root = f"{chr(65 + i)}:\\"
+        if mask >> i & 1 and k.GetDriveTypeW(root) == 2:  # DRIVE_REMOVABLE
+            label = ctypes.create_unicode_buffer(261)
+            if k.GetVolumeInformationW(root, label, 261, None, None, None, None, 0):  # 0 = lector sin tarjeta
+                out[chr(65 + i)] = label.value or "Memoria USB"
+    return out
+
+
+HEADPHONES = ("auricular", "headphone", "headset", "buds", "airpods", "hands-free", "manos libres")
 
 
 def load_config():
@@ -725,9 +845,19 @@ class Layered:
         self.screen = u.GetDC(None)
         self.mem = g.CreateCompatibleDC(self.screen)
         bmi, bits = BITMAPINFOHEADER(ctypes.sizeof(BITMAPINFOHEADER), W, -H, 1, 32), vp()
-        g.SelectObject(self.mem, g.CreateDIBSection(self.mem, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0))
+        self.bmp = g.CreateDIBSection(self.mem, ctypes.byref(bmi), 0, ctypes.byref(bits), None, 0)
+        g.SelectObject(self.mem, self.bmp)
         self.buf = (ctypes.c_ubyte * (W * H * 4)).from_address(bits.value)  # BGRA premultiplicado = ARGB32
         self.surface = cairo.ImageSurface.create_for_data(self.buf, cairo.FORMAT_ARGB32, W, H, W * 4)
+
+    def close(self):
+        """Libera el bitmap (al cambiar de tamaño o de pantalla se crea uno nuevo)."""
+        g = ctypes.windll.gdi32
+        self.surface.finish()
+        g.DeleteObject.argtypes = g.DeleteDC.argtypes = [ctypes.c_void_p]
+        g.DeleteObject(self.bmp)
+        g.DeleteDC(self.mem)
+        self.u.ReleaseDC(None, ctypes.c_void_p(self.screen))
 
     def show(self, x, y):
         self.surface.flush()
@@ -955,13 +1085,14 @@ def art_surface(data, px):
     return cairo.ImageSurface.create_for_data(raw, cairo.FORMAT_ARGB32, px, px, px * 4), raw
 
 
-def start_tray(toggle, quit_):
+def start_tray(toggle, quit_, settings):
     """Ícono en la bandeja de Windows: clic = mostrar/ocultar la isla."""
     try:
         import pystray
     except ImportError:
         return None
     menu = pystray.Menu(pystray.MenuItem("Mostrar / ocultar  (Ctrl+Alt+I)", lambda: toggle(), default=True),
+                        pystray.MenuItem("Ajustes…", lambda: settings()),
                         pystray.MenuItem("Salir", lambda: quit_()))
     tray = pystray.Icon("isla-dinamica", robot_image().resize((64, 64), Image.LANCZOS), "Isla dinámica", menu)
     tray.run_detached()
@@ -1001,7 +1132,9 @@ SHOULDER = 9  # radio de las curvas donde la isla se une al borde de arriba
 class Island:
     def __init__(self):
         self.cfg = load_config()
-        self.base_S = dpi_scale()
+        dpi_scale()  # pide píxeles reales a Windows (antes de medir pantallas)
+        self.mon = pick_monitor(monitors(), self.cfg["monitor"], self.pointer())
+        self.base_S = self.mon["scale"] if self.mon else 1.0
         u = ctypes.windll.user32
         u.GetForegroundWindow.restype = ctypes.c_void_p
         before = u.GetForegroundWindow()  # al crearse, la ventana de Tk se lleva el foco: se lo devolvemos
@@ -1035,16 +1168,23 @@ class Island:
         self.shown, self.quitting = True, False  # mostrar/ocultar a mano (bandeja o Ctrl+Alt+I)
         self.cleared = False  # ya se borró la ventana estando oculta
         self.keep_open_until = 0  # abierta a la fuerza (menú de ajustes recién usado)
+        self.drag = None  # (x inicial, y inicial) de un arrastre sobre la música
+        self.ac = self.drives = None  # cargador y memorias USB (None = todavía no se miró)
+        self.drag_dx = self.drag_vis = 0.0  # cuánto se arrastró / cuánto se ve corrido el contenido
         self.hov = {"play": 0.0, "prev": 0.0, "next": 0.0}  # 0..1: cuánto está "encendido" cada botón
         self.pressed = {}  # botón -> momento del último clic
         self.morph = 0.0  # 0 = ▶, 1 = ⏸ (se transforma de a poco)
         self.art_k = 1.0  # tamaño de la carátula: chica en pausa, grande sonando
         self.build_menu()
-        self.tray = start_tray(self.toggle, self.request_quit)
+        self.settings, self.settings_requested = None, False  # ventana de ajustes (ajustes.py)
+        self.tray = start_tray(self.toggle, self.request_quit, self.request_settings)
         threading.Thread(target=hotkey_loop, args=(self.toggle,), daemon=True).start()
         root.bind("<Button-3>", self.popup)
-        root.bind("<MouseWheel>", lambda e: self.timer.scroll(e.delta > 0))
-        root.bind("<Button-1>", self.click)
+        root.bind("<MouseWheel>", self.wheel)
+        root.bind("<ButtonPress-1>", self.press_start)
+        root.bind("<B1-Motion>", self.press_move)
+        root.bind("<ButtonRelease-1>", self.press_end)
+        root.bind("<Double-Button-1>", self.double_click)
         self.tick()
 
     # --- ajustes ---
@@ -1053,11 +1193,27 @@ class Island:
         """(Re)crea la ventana para la escala actual (DPI de Windows × tamaño elegido)."""
         self.S = self.base_S * self.cfg["size"]
         self.W, self.H = round(WIN[0] * self.S), round(WIN[1] * self.S)
-        self.X = (self.root.winfo_screenwidth() - self.W) // 2
-        self.root.geometry(f"{self.W}x{self.H}+{self.X}+0")
+        m = self.mon or {"x": 0, "y": 0, "w": self.root.winfo_screenwidth()}
+        self.X, self.Y = m["x"] + (m["w"] - self.W) // 2, m["y"]
+        self.root.geometry(f"{self.W}x{self.H}+{self.X}+{self.Y}")
+        if getattr(self, "win", None):
+            self.win.close()
         self.win = Layered(self.hwnd, self.W, self.H)
         self.p = Paint(cairo.Context(self.win.surface))
         self.art = self.icon = (None, None)  # se regeneran a la nueva resolución
+
+    @staticmethod
+    def pointer():
+        pt = wintypes.POINT()
+        ctypes.windll.user32.GetCursorPos(ctypes.byref(pt))
+        return pt.x, pt.y
+
+    def follow_monitor(self):
+        """Mueve la isla si cambió la pantalla elegida (o la del mouse, o se desconectó un monitor)."""
+        m = pick_monitor(monitors(), self.cfg["monitor"], self.pointer())
+        if m and m != self.mon:
+            self.mon, self.base_S = m, m["scale"]
+            self.resize()
 
     def char(self, p, x, y, size, mood, now, a=1.0):
         character(p, self.cfg["character"], x, y, size, mood, now, a, self.cfg["body"])
@@ -1098,10 +1254,21 @@ class Island:
         self.apply_config()
         if key == "size":
             self.resize()
+        if key == "monitor":
+            self.follow_monitor()
+        # el menú rápido muestra lo mismo que la ventana de ajustes
+        var = {"size": "size_var", "accent": "accent_var", "character": "char_var", "body": "body_var",
+               "mode": "mode_var"}.get(key)
+        if var and hasattr(self, var):
+            getattr(self, var).set(value)
+        elif key in getattr(self, "vars", {}):
+            self.vars[key].set(value)
 
     def build_menu(self):
         font = ("Segoe UI", 10)
         m = self.menu = tk.Menu(self.root, tearoff=0, font=font)
+        m.add_command(label="Ajustes…", command=self.open_settings)
+        m.add_separator()
         self.vars = {k: tk.BooleanVar(value=self.cfg[k]) for k in
                      ("sound", "hide_fullscreen", "notifications", "translucent", "weather", "calendar", "updates",
                       "reply")}
@@ -1170,8 +1337,8 @@ class Island:
         finally:
             self.keep_open_until = time.time() + 6  # y unos segundos más, para ver cómo quedó el cambio
             self.menu.grab_release()
-            if before and u.GetForegroundWindow() in (self.hwnd, None):
-                u.SetForegroundWindow(ctypes.c_void_p(before))
+            if before and u.GetForegroundWindow() in (self.hwnd, None) and not self.settings:
+                u.SetForegroundWindow(ctypes.c_void_p(before))  # (si abriste Ajustes, el foco queda ahí)
 
     def toggle(self):
         """Muestra u oculta la isla (puede llamarse desde otros hilos: solo cambia banderas)."""
@@ -1180,6 +1347,17 @@ class Island:
         if not self.shown:
             for p in list(self.claude.perms):  # los pedidos pendientes vuelven a la terminal
                 p["done"].set()
+
+    def request_settings(self):
+        self.settings_requested = True  # desde el hilo de la bandeja: se abre en el próximo tick
+
+    def open_settings(self):
+        if self.settings:
+            self.settings.top.lift()
+            self.settings.top.focus_force()
+            return
+        from ajustes import Settings
+        self.settings = Settings(self)
 
     def request_quit(self):
         self.quitting = True  # desde el hilo de la bandeja: tkinter solo se toca desde su hilo
@@ -1194,8 +1372,55 @@ class Island:
     def left_edge(self):
         return (WIN[0] - self.w) / 2
 
+    def local(self, e):
+        """Coordenadas de un evento del mouse, en px lógicos de la isla."""
+        return e.x / self.S - self.left_edge(), e.y / self.S
+
+    def in_music(self, y):
+        """¿Está y sobre la parte de música de la isla abierta?"""
+        return self.mode == "big" and (self.companion or y >= 106)
+
+    def press_start(self, e):
+        x, y = self.local(e)
+        self.drag = (x, y) if self.in_music(y) and not self.hit_name(x, y) else None
+        if not self.drag:
+            self.click(e)
+
+    def press_move(self, e):
+        if self.drag:
+            self.drag_dx = self.local(e)[0] - self.drag[0]
+
+    def press_end(self, e):
+        """Deslizar sobre la música = cambiar de canción (a la derecha: anterior; a la izquierda: siguiente)."""
+        if self.drag:
+            dx = self.drag_dx
+            self.drag, self.drag_dx = None, 0.0
+            if abs(dx) > 50:
+                self.media.send("try_skip_previous_async" if dx > 0 else "try_skip_next_async")
+                self.pressed["prev" if dx > 0 else "next"] = time.time()  # el botón también se anima
+
+    def double_click(self, e):
+        x, y = self.local(e)
+        if self.in_music(y) and not self.hit_name(x, y) and x < self.w - 120:  # carátula o título
+            focus_app(self.media.app)
+
+    def wheel(self, e):
+        """Rueda: sobre el temporizador cambia los minutos; en el resto de la isla, el volumen."""
+        x, y = self.local(e)
+        if self.hit_name(x, y) == "timer":
+            self.timer.scroll(e.delta > 0)
+        else:
+            self.levels.nudge(0.02 * (1 if e.delta > 0 else -1) * max(1, abs(e.delta) // 120))
+
+    def hit_name(self, x, y):
+        """Nombre de la zona clicable en (x, y) ("button" si no tiene nombre), o None."""
+        for x1, y1, x2, y2, _, name in reversed(self.hits):
+            if x1 <= x <= x2 and y1 <= y <= y2:
+                return name or "button"
+        return None
+
     def click(self, e):
-        x, y = e.x / self.S - self.left_edge(), e.y / self.S
+        x, y = self.local(e)
         for x1, y1, x2, y2, action, name in reversed(self.hits):
             if x1 <= x <= x2 and y1 <= y <= y2:
                 if name:
@@ -1240,6 +1465,37 @@ class Island:
                 if self.cfg["sound"]:
                     winsound.MessageBeep(winsound.MB_ICONASTERISK)
 
+    def device_card(self, icon, title, body, action=None):
+        self.card = {"kind": "device", "icon": icon, "title": title, "body": body, "action": action,
+                     "until": time.time() + 5}
+
+    def check_devices(self, now):
+        """Cargador, salida de audio y memorias USB: una tarjeta cuando algo se conecta o se desconecta."""
+        if self.bat:
+            if self.ac is not None and self.bat[1] != self.ac:
+                self.device_card("plug" if self.bat[1] else "battery",
+                                 "Cargando" if self.bat[1] else "Cargador desconectado", f"Batería al {self.bat[0]}%")
+            self.ac = self.bat[1]
+        out = self.levels.device_event
+        if out:
+            self.levels.device_event = None
+            phones = any(word in out.lower() for word in HEADPHONES)
+            self.device_card("headphones" if phones else "speaker", out, "Ahora el sonido sale por acá")
+        drives = removable_drives()
+        if self.drives is not None:
+            import shutil
+            for letter in sorted(drives.keys() - self.drives.keys()):
+                root = letter + ":\\"
+                try:
+                    free = f" · {shutil.disk_usage(root).free / 1e9:.1f} GB libres"
+                except OSError:
+                    free = ""
+                self.device_card("usb", f"{drives[letter]} conectado", f"Unidad {letter}:{free} · clic para abrir",
+                                 lambda root=root: os.startfile(root))
+            for letter in sorted(self.drives.keys() - drives.keys()):
+                self.device_card("usb", f"{self.drives[letter]} desconectado", f"Unidad {letter}: · ya puedes guardarla")
+        self.drives = drives
+
     def next_session(self):
         items = self.claude.ordered()
         if items:
@@ -1250,10 +1506,15 @@ class Island:
         root, now, S = self.root, time.time(), self.S
         if self.quitting:
             return self.quit()
+        if self.settings_requested:
+            self.settings_requested = False
+            self.open_settings()
         if now - self.stats_at >= 1:
             self.stats_at = now
             self.bat, self.cpu_pct, self.ram_pct = battery(), self.cpu.percent(), ram()
             self.hidden = self.cfg["hide_fullscreen"] and fullscreen()
+            self.follow_monitor()
+            self.check_devices(now)
         left = self.timer.left()
         if left is not None and left <= 0:
             self.timer.ends = None
@@ -1261,7 +1522,7 @@ class Island:
             if self.cfg["sound"]:
                 winsound.MessageBeep(winsound.MB_ICONASTERISK)
         px, py = root.winfo_pointerxy()
-        lx, ly = (px - self.X) / S - self.left_edge(), py / S
+        lx, ly = (px - self.X) / S - self.left_edge(), (py - self.Y) / S
         hover = 0 <= lx < self.w and 0 <= ly < self.h
         note = self.notes.current
         if note and hover and self.mode == "note":
@@ -1299,15 +1560,17 @@ class Island:
         for n in self.hov:
             self.hov[n] += ((n == under) - self.hov[n]) * 0.25
         self.morph += (self.media.playing - self.morph) * 0.25
+        self.drag_vis += (self.drag_dx - self.drag_vis) * 0.35
         self.art_k += ((1.0 if self.media.playing else 0.9) - self.art_k) * 0.15
         visible = self.shown and not (self.hidden and mode != "perm")
         if visible or not self.cleared:  # oculta: se borra una vez y no se vuelve a dibujar
             self.draw(self.w, self.h, now, mode, target)
-            self.win.show(self.X, 0)
+            self.win.show(self.X, self.Y)
         self.cleared = not visible
         # ahorro: 60 fps solo mientras cambia de tamaño; quieta, lo justo para que el robot respire
         moving = (abs(self.vw) + abs(self.vh) > 0.05 or abs(target[0] - self.w) + abs(target[1] - self.h) > 0.5
                   or now - max(self.pressed.values(), default=0) < 0.7  # botón rebotando
+                  or self.drag or abs(self.drag_vis) > 0.5  # arrastrando la música
                   or (mode == "big" and (under or any(0.01 < v < 0.99 for v in self.hov.values())
                                          or abs(self.media.playing - self.morph) > 0.01
                                          or abs((1.0 if self.media.playing else 0.9) - self.art_k) > 0.002)))
@@ -1492,6 +1755,9 @@ class Island:
                 body = "Descargando… se reinicia sola al terminar"
             elif self.updater.state == "error":
                 body = "No se pudo descargar; prueba más tarde"
+        elif card["kind"] == "device":
+            self.draw_device_icon(card["icon"], x0 + size / 2, y0 + size / 2, a)
+            title, body = card["title"], card["body"]
         else:  # calendario: hojita con argollas
             cx, cy = x0 + size / 2, y0 + size / 2
             p.rrect(cx - 11, cy - 9, cx + 11, cy + 12, 3, WHITE, a)
@@ -1511,10 +1777,41 @@ class Island:
                 p.text(right - bw / 2, h / 2, label, "btn", fg, a, anchor="center")
                 self.hit(right - bw, 0, right, h, act)
                 right -= bw + 8
-        else:
-            self.hit(0, 0, w, h, lambda: card.update(until=0))  # clic = descartar
+        else:  # clic = la acción de la tarjeta (abrir el USB…) o descartarla
+            act = card.get("action")
+            self.hit(0, 0, w, h, lambda: (act and act(), card.update(until=0)))
         p.text(x, 23, p.fit(title, "title", right - x - 8), "title", WHITE, a)
         p.text(x, 42, p.fit(body, "small", right - x - 8), "small", "#c8c8cc", a)
+
+    def draw_device_icon(self, kind, cx, cy, a):
+        p, c, col = self.p, self.p.c, self.accent
+        if kind == "plug":  # rayo
+            p.poly([(cx + 2, cy - 11), (cx - 7, cy + 2), (cx - 1, cy + 2), (cx - 3, cy + 11), (cx + 7, cy - 2),
+                    (cx + 1, cy - 2)], col, a)
+        elif kind == "battery":
+            p.rrect(cx - 11, cy - 6, cx + 9, cy + 6, 2.5, WHITE, a)
+            p.rrect(cx - 9, cy - 4, cx + 7, cy + 4, 1.5, shade(col, 0.25), a)
+            p.rrect(cx - 9, cy - 4, cx - 9 + 16 * self.bat[0] / 100 if self.bat else cx, cy + 4, 1.5, col, a)
+            p.rrect(cx + 9, cy - 2.5, cx + 12, cy + 2.5, 1, WHITE, a)
+        elif kind == "headphones":
+            c.new_sub_path()
+            c.arc(cx, cy + 2, 10, math.pi, 2 * math.pi)
+            c.set_line_width(2.4)
+            p.rgba(WHITE, a)
+            c.stroke()
+            for dx in (-10, 10):
+                p.rrect(cx + dx - 3.5, cy, cx + dx + 3.5, cy + 10, 3, col, a)
+        elif kind == "speaker":
+            p.poly([(cx - 9, cy - 4), (cx - 4, cy - 4), (cx + 2, cy - 9), (cx + 2, cy + 9), (cx - 4, cy + 4),
+                    (cx - 9, cy + 4)], WHITE, a)
+            c.new_sub_path()
+            c.arc(cx + 3, cy, 7, -0.8, 0.8)
+            c.set_line_width(2)
+            p.rgba(col, a)
+            c.stroke()
+        else:  # usb: pendrive
+            p.rrect(cx - 6, cy - 4, cx + 6, cy + 12, 3, WHITE, a)
+            p.rrect(cx - 4, cy - 11, cx + 4, cy - 4, 1, col, a)
 
     def open_reply_box(self):
         """Cuadro para escribirle a Claude debajo de la isla. Acá sí se toma el foco: pediste escribir."""
@@ -1527,7 +1824,7 @@ class Island:
         top.overrideredirect(True)
         top.attributes("-topmost", True)
         W, H = round(440 * S), round(46 * S)
-        top.geometry(f"{W}x{H}+{(self.root.winfo_screenwidth() - W) // 2}+{round((BIG[1] + 10) * S)}")
+        top.geometry(f"{W}x{H}+{self.X + (self.W - W) // 2}+{self.Y + round((BIG[1] + 10) * S)}")
         frame = tk.Frame(top, bg="#1c1c1e")
         frame.pack(fill="both", expand=True, padx=1, pady=1)
         tk.Label(frame, text="Claude ›", bg="#1c1c1e", fg=self.accent, font=("Segoe UI", 10, "bold")).pack(
@@ -1675,7 +1972,10 @@ class Island:
                 self.art = (m.art, art_surface(m.art, round(size * self.S * 2)))
             except OSError:  # imagen rota
                 self.art = (m.art, None)
+        sx = self.drag_vis * 0.7  # arrastrando: carátula y título siguen al mouse y se apagan
+        fade = a * (1 - min(1, abs(sx) / 120) * 0.7)
         c.save()  # la carátula se achica un poco en pausa y vuelve a crecer al sonar
+        c.translate(sx, 0)
         k = self.art_k
         c.translate(x0 + size / 2, y0 + size / 2)
         c.scale(k, k)
@@ -1689,7 +1989,7 @@ class Island:
             c.scale(size / surf.get_width(), size / surf.get_width())
             c.set_source_surface(surf, 0, 0)
             c.get_source().set_filter(cairo.FILTER_GOOD)
-            c.paint_with_alpha(clamp(a * (0.55 + 0.45 * (k - 0.9) / 0.1)))  # más apagada en pausa
+            c.paint_with_alpha(clamp(fade * (0.55 + 0.45 * (k - 0.9) / 0.1)))  # más apagada en pausa
             c.restore()
         else:
             p.rrect(x0, y0, x0 + size, y0 + size, 12, "#1f1f23", a)
@@ -1707,8 +2007,8 @@ class Island:
         else:
             p.text(w - 22, y0 + 31, f"{DAYS[d.weekday()]} {d.day} {MONTHS[d.month - 1]}", "small", GREY, a,
                    anchor="e")
-        p.text(x, y0 + 12, p.fit(m.title or "Nada sonando", "title", w - x - 90), "title", WHITE, a)
-        p.text(x, y0 + 31, p.fit(m.artist, "small", w - x - 90), "small", GREY, a)
+        p.text(x + sx, y0 + 12, p.fit(m.title or "Nada sonando", "title", w - x - 90), "title", WHITE, fade)
+        p.text(x + sx, y0 + 31, p.fit(m.artist, "small", w - x - 90), "small", GREY, fade)
         if m.end >= 1:
             pos = min(m.pos + (now - m.stamp if m.playing else 0), m.end)  # avanza suave entre sondeos
             x1, x2, y = x, w - 104, y0 + 48
@@ -1735,7 +2035,7 @@ class Island:
         p.line(ix, y + 1, ix, y - 2, col, a, 1.5)
         p.line(ix - 2, y - 7, ix + 2, y - 7, col, a, 1.5)
         p.text(ix + 11, y, label, "small", col, a)
-        self.hit(w - 22 - tw, y - 14, w - 22, y + 14, self.timer.toggle)
+        self.hit(w - 22 - tw, y - 14, w - 22, y + 14, self.timer.toggle, "timer")
 
 
 def main():

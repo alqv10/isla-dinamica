@@ -89,6 +89,11 @@ t0 = time.time()
 assert run_hook({**base, "hook_event_name": "Stop"}) == b"" and time.time() - t0 < 2
 cc.reply_enabled = True
 assert island.version_tuple("v1.10.0") > island.version_tuple("1.9.3")
+mons = [{"name": "A", "x": 0, "y": 0, "w": 2560, "h": 1440, "scale": 1.0, "primary": True},
+        {"name": "B", "x": 2560, "y": 0, "w": 1920, "h": 1080, "scale": 1.5, "primary": False}]
+assert island.pick_monitor(mons, "mouse", (3000, 500))["name"] == "B"
+assert island.pick_monitor(mons, "B", (0, 0))["name"] == "B"
+assert island.pick_monitor(mons, "desconectada", (0, 0))["name"] == "A"  # vuelve a la principal
 cc.handle({"session_id": "otra", "cwd": "C:/y/blog", "hook_event_name": "SessionStart"})
 assert [sid for sid, _ in cc.ordered()] == ["grace", "otra"]
 cc.handle({"session_id": "otra", "hook_event_name": "SessionEnd"})
