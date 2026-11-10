@@ -1330,7 +1330,7 @@ class Island:
         foco: la isla lo toma mientras el menú está abierto y después se lo devuelve a tu app."""
         u = ctypes.windll.user32
         before = u.GetForegroundWindow()
-        u.SetForegroundWindow(ctypes.c_void_p(self.hwnd))
+        bring_to_front(ctypes.c_void_p(self.hwnd))  # con Alt: Windows a veces no cede el primer plano sin tecla
         self.keep_open_until = float("inf")  # abierta mientras elijes, aunque el mouse esté en el menú
         try:
             self.menu.tk_popup(e.x_root, e.y_root)  # en Windows espera hasta que el menú se cierra
