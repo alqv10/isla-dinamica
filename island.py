@@ -532,7 +532,9 @@ class Layered:
         g.CreateDIBSection.argtypes = [vp, vp, ctypes.c_uint, ctypes.POINTER(vp), vp, ctypes.c_uint32]
         u.UpdateLayeredWindow.argtypes = [vp, vp, vp, vp, vp, vp, ctypes.c_uint32, vp, ctypes.c_uint32]
         u.GetWindowLongW.argtypes, u.SetWindowLongW.argtypes = [vp, ctypes.c_int], [vp, ctypes.c_int, ctypes.c_long]
-        u.SetWindowLongW(hwnd, -20, u.GetWindowLongW(hwnd, -20) | 0x80000)  # GWL_EXSTYLE |= WS_EX_LAYERED
+        # WS_EX_LAYERED: alfa por píxel. WS_EX_NOACTIVATE: los clics no le roban el foco a la app en la que
+        # estás. WS_EX_TOOLWINDOW: no aparece en Alt+Tab ni en la barra de tareas.
+        u.SetWindowLongW(hwnd, -20, u.GetWindowLongW(hwnd, -20) | 0x80000 | 0x08000000 | 0x80)
         self.u, self.hwnd, self.W, self.H = u, hwnd, W, H
         self.screen = u.GetDC(None)
         self.mem = g.CreateCompatibleDC(self.screen)
@@ -758,6 +760,9 @@ class Island:
     def __init__(self):
         self.cfg = load_config()
         self.base_S = dpi_scale()
+        u = ctypes.windll.user32
+        u.GetForegroundWindow.restype = ctypes.c_void_p
+        before = u.GetForegroundWindow()  # al crearse, la ventana de Tk se lleva el foco: se lo devolvemos
         self.root = root = tk.Tk()
         root.overrideredirect(True)
         root.attributes("-topmost", True)
@@ -765,6 +770,8 @@ class Island:
         ctypes.windll.user32.GetParent.restype = ctypes.c_void_p
         self.hwnd = ctypes.windll.user32.GetParent(ctypes.c_void_p(root.winfo_id()))
         self.resize()
+        if before and u.GetForegroundWindow() == self.hwnd:
+            u.SetForegroundWindow(ctypes.c_void_p(before))
         self.w, self.h = SMALL
         self.vw = self.vh = 0.0  # velocidad del resorte
         self.hits = []  # (x1, y1, x2, y2, acción) en coordenadas de la isla
@@ -786,7 +793,7 @@ class Island:
         self.build_menu()
         self.tray = start_tray(self.toggle, self.request_quit)
         threading.Thread(target=hotkey_loop, args=(self.toggle,), daemon=True).start()
-        root.bind("<Button-3>", lambda e: self.menu.tk_popup(e.x_root, e.y_root))
+        root.bind("<Button-3>", self.popup)
         root.bind("<MouseWheel>", lambda e: self.timer.scroll(e.delta > 0))
         root.bind("<Button-1>", self.click)
         self.tick()
@@ -835,6 +842,19 @@ class Island:
         m.add_separator()
         m.add_command(label="Ocultar", accelerator="Ctrl+Alt+I", command=self.toggle)
         m.add_command(label="Salir", command=self.quit)
+
+    def popup(self, e):
+        """Menú de ajustes. Un menú de Windows solo se cierra al hacer clic afuera si su ventana tiene el
+        foco: la isla lo toma mientras el menú está abierto y después se lo devuelve a tu app."""
+        u = ctypes.windll.user32
+        before = u.GetForegroundWindow()
+        u.SetForegroundWindow(ctypes.c_void_p(self.hwnd))
+        try:
+            self.menu.tk_popup(e.x_root, e.y_root)  # en Windows espera hasta que el menú se cierra
+        finally:
+            self.menu.grab_release()
+            if before and u.GetForegroundWindow() in (self.hwnd, None):
+                u.SetForegroundWindow(ctypes.c_void_p(before))
 
     def toggle(self):
         """Muestra u oculta la isla (puede llamarse desde otros hilos: solo cambia banderas)."""
