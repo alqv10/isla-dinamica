@@ -1295,6 +1295,8 @@ class Island:
         u.GetForegroundWindow.restype = ctypes.c_void_p
         before = u.GetForegroundWindow()  # al crearse, la ventana de Tk se lleva el foco: se lo devolvemos
         self.root = root = tk.Tk()
+        import registro
+        registro.install(root, VERSION)
         root.overrideredirect(True)
         root.attributes("-topmost", True)
         root.update()
@@ -1511,6 +1513,7 @@ class Island:
                           command=lambda: set_startup(self.vars["startup"].get()))
         check(m, "updates", "Buscar actualizaciones")
         m.add_separator()
+        m.add_command(label="Ver registro de errores", command=self.open_log)
         m.add_command(label="Ocultar", accelerator="Ctrl+Alt+I", command=self.toggle)
         m.add_command(label="Salir", command=self.quit)
         m.configure(postcommand=self.menu_update_item)
@@ -1548,6 +1551,12 @@ class Island:
         if not self.shown:
             for p in list(self.claude.perms):  # los pedidos pendientes vuelven a la terminal
                 p["done"].set()
+
+    def open_log(self):
+        import registro
+        if not registro.LOG.exists():
+            registro.write("sin errores hasta ahora")
+        os.startfile(registro.LOG)
 
     def request_settings(self):
         self.settings_requested = True  # desde el hilo de la bandeja: se abre en el próximo tick
