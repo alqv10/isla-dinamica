@@ -615,9 +615,30 @@ class Paint:
         self.c.select_font_face(face, cairo.FONT_SLANT_NORMAL, *weight)
         self.c.set_font_size(pt * 96 / 72)
 
+    @staticmethod
+    def runs(s):
+        """Parte el texto en tramos normales y de símbolos (✓ ↗ ♪ ⚡…): Segoe UI no los tiene y cairo no
+        busca otra fuente solo, así que esos tramos van con Segoe UI Symbol."""
+        out = []
+        for ch in s:
+            sym = 0x2190 <= ord(ch) <= 0x2BFF
+            if out and out[-1][1] == sym:
+                out[-1][0] += ch
+            else:
+                out.append([ch, sym])
+        return out
+
+    def font_run(self, key, sym):
+        face, pt, *weight = FONTS[key]
+        self.c.select_font_face("Segoe UI Symbol" if sym else face, cairo.FONT_SLANT_NORMAL, *weight)
+        self.c.set_font_size(pt * 96 / 72)
+
     def width(self, s, font):
-        self.font(font)
-        return self.c.text_extents(s).x_advance
+        total = 0
+        for chunk, sym in self.runs(s):
+            self.font_run(font, sym)
+            total += self.c.text_extents(chunk).x_advance
+        return total
 
     def fit(self, s, font, maxw):
         """Recorta el texto con … para que entre en maxw."""
@@ -630,12 +651,14 @@ class Paint:
     def text(self, x, y, s, font, col, a, anchor="w"):
         c = self.c
         self.font(font)
-        ascent, descent = c.font_extents()[:2]
-        wd = c.text_extents(s).x_advance
+        ascent, descent = c.font_extents()[:2]  # alineación vertical según la fuente principal
+        wd = self.width(s, font)
         x -= {"w": 0, "center": wd / 2, "e": wd}[anchor]
         c.move_to(x, y + (ascent - descent) / 2)
         self.rgba(col, a)
-        c.show_text(s)
+        for chunk, sym in self.runs(s):
+            self.font_run(font, sym)
+            c.show_text(chunk)  # show_text deja el cursor al final: el siguiente tramo sigue ahí
         return x, x + wd
 
 
