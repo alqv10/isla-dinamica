@@ -25,7 +25,7 @@ def install():
     exe = Path(sys.executable)
     with winreg.CreateKey(winreg.HKEY_CURRENT_USER, UNINSTALL_KEY) as k:  # aparece en "Aplicaciones instaladas"
         for name, value in [("DisplayName", NAME), ("Publisher", "Isla dinámica (código abierto)"),
-                            ("DisplayIcon", f"{exe},0"), ("DisplayVersion", "1.0"),
+                            ("DisplayIcon", f"{exe},0"), ("DisplayVersion", island.VERSION),
                             ("InstallLocation", str(exe.parent)), ("UninstallString", f'"{exe}" --uninstall')]:
             winreg.SetValueEx(k, name, 0, winreg.REG_SZ, value)
         winreg.SetValueEx(k, "NoModify", 0, winreg.REG_DWORD, 1)

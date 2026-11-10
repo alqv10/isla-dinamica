@@ -11,3 +11,5 @@ pycairo
 pycaw
 screen-brightness-control
 pystray
+winrt-Windows.ApplicationModel.Appointments
+winrt-Windows.Devices.Geolocation

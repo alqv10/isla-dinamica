@@ -17,7 +17,7 @@ try:
     # Claude Code en cada evento con la isla cerrada. Ya conectados, se espera la respuesta (permisos).
     conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=0.2)
     conn.connect()
-    conn.sock.settimeout(110)
+    conn.sock.settimeout(390)  # permisos: 100 s; responder a Claude: hasta ~306 s
     conn.request("POST", "/", data, {"Content-Type": "application/json"})
     sys.stdout.buffer.write(conn.getresponse().read())
 except OSError:

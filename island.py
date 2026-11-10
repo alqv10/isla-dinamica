@@ -29,6 +29,11 @@ try:
 except ImportError:
     MediaManager = None  # sin winrt: sin música
 try:
+    from winrt.windows.applicationmodel.appointments import AppointmentManager, AppointmentStoreAccessType
+    from winrt.windows.devices.geolocation import Geolocator
+except ImportError:
+    AppointmentManager = Geolocator = None  # sin calendario ni clima
+try:
     from winrt.windows.foundation import Size
     from winrt.windows.ui.notifications import KnownNotificationBindings, NotificationKinds
     from winrt.windows.ui.notifications.management import UserNotificationListener
@@ -44,7 +49,14 @@ PERMISSION_WAIT = 100  # s esperando un clic antes de devolver el permiso a la t
 SMALL, BIG, PERM = (230, 34), (480, 214), (520, 44)  # en px lógicos (a 100 % de escala)
 LEVEL, NOTIF = (300, 40), (440, 64)  # barra de volumen/brillo y notificación
 CONFIG = Path.home() / ".isla-dinamica.json"
-DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications": True}
+VERSION = "1.1.0"
+REPO = "alqv10/isla-dinamica"
+DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications": True, "accent": "#3ddc84",
+            "translucent": False, "weather": True, "calendar": True, "updates": True, "reply": True}
+ACCENTS = [("Verde", "#3ddc84"), ("Morado", "#a78bfa"), ("Azul", "#4cc2ff"), ("Naranja", "#ff9f43"),
+           ("Rosa", "#ff6b9d")]
+REPLY_GRACE = 6  # s que la isla ofrece "Responder" cuando Claude termina (el turno espera ese rato)
+REPLY_WAIT = 300  # s para escribir la respuesta una vez abierto el cuadro
 STARTUP = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/Isla dinamica.lnk"
 PLAYING = 4  # GlobalSystemMediaTransportControlsSessionPlaybackStatus.PLAYING
 GREEN, GREY, FIELD, RED, WHITE = "#3ddc84", "#9a9a9f", "#1c1c1e", "#ff5555", "#ffffff"
@@ -262,6 +274,123 @@ class Notifications:
                         "body": first_line(" ".join(texts[1:]), 120), "icon": icon, "until": time.time() + 6}
 
 
+def fetch_json(url):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "isla-dinamica", "Accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.load(r)
+
+
+def weather_icon(code, day):
+    """Código WMO de Open-Meteo -> símbolo que Segoe UI Symbol sí tiene."""
+    if code in (0, 1):
+        return "☀" if day else "☾"
+    if code in (2, 3, 45, 48):
+        return "☁"
+    if 71 <= code <= 77 or code in (85, 86):
+        return "❄"
+    if code >= 95:
+        return "⚡"
+    return "☂"  # llovizna y lluvia
+
+
+class Weather:
+    """Temperatura actual (Open-Meteo, gratis y sin cuenta). La ubicación de Windows se redondea a ~10 km
+    antes de mandarla."""
+    def __init__(self, loop):
+        self.temp, self.icon, self.enabled = None, "", True
+        if Geolocator:
+            asyncio.run_coroutine_threadsafe(self.poll(), loop)
+
+    async def poll(self):
+        while True:
+            if self.enabled:
+                try:
+                    pos = (await Geolocator().get_geoposition_async()).coordinate.point.position
+                    lat, lon = round(pos.latitude, 1), round(pos.longitude, 1)
+                    cur = (await asyncio.to_thread(fetch_json, "https://api.open-meteo.com/v1/forecast?latitude="
+                           f"{lat}&longitude={lon}&current=temperature_2m,weather_code,is_day"))["current"]
+                    self.temp = round(cur["temperature_2m"])
+                    self.icon = weather_icon(cur["weather_code"], cur["is_day"])
+                except (OSError, ValueError, KeyError):
+                    pass  # sin internet o sin permiso de ubicación: se reintenta en el próximo ciclo
+            await asyncio.sleep(1800)
+
+
+class Calendar:
+    """Próxima cita de hoy en el calendario de Windows (Outlook, Google… si están conectados a Windows)."""
+    def __init__(self, loop):
+        self.next = None  # (asunto, inicio con zona horaria local)
+        self.enabled = True
+        if AppointmentManager:
+            asyncio.run_coroutine_threadsafe(self.poll(), loop)
+
+    async def poll(self):
+        from datetime import timedelta
+        try:
+            store = await AppointmentManager.request_store_async(AppointmentStoreAccessType.ALL_CALENDARS_READ_ONLY)
+        except OSError:
+            return
+        while store:
+            try:
+                now = datetime.now(timezone.utc)
+                found = await store.find_appointments_async(now, timedelta(hours=24))
+                upcoming = sorted((a.start_time, a.subject) for a in found if not a.all_day and a.start_time > now)
+                self.next = (upcoming[0][1] or "Evento", upcoming[0][0].astimezone()) if upcoming else None
+            except OSError:
+                pass
+            await asyncio.sleep(60)
+
+
+def version_tuple(v):
+    return tuple(int(x) for x in v.lstrip("v").split(".") if x.isdigit())
+
+
+class Updater:
+    """Revisa los Releases de GitHub cada 6 h; si hay versión nueva, la isla ofrece actualizar."""
+    def __init__(self, loop):
+        self.latest = None  # (versión, url del instalador, url de la página)
+        self.state = ""  # "", "descargando", "error"
+        self.enabled = True
+        asyncio.run_coroutine_threadsafe(self.poll(), loop)
+
+    async def poll(self):
+        await asyncio.sleep(20)  # no competir con el arranque de Windows
+        while True:
+            if self.enabled:
+                try:
+                    rel = await asyncio.to_thread(fetch_json, f"https://api.github.com/repos/{REPO}/releases/latest")
+                    asset = next((a["browser_download_url"] for a in rel["assets"] if a["name"].endswith("Setup.exe")), None)
+                    if version_tuple(rel["tag_name"]) > version_tuple(VERSION) and asset:
+                        self.latest = (rel["tag_name"].lstrip("v"), asset, rel["html_url"])
+                except (OSError, ValueError, KeyError):
+                    pass
+            await asyncio.sleep(6 * 3600)
+
+    def install(self):
+        """Descarga el instalador nuevo y lo corre sin ventanas: cierra esta isla, la reemplaza y la abre."""
+        if not self.latest or self.state == "descargando":
+            return
+        if not getattr(sys, "frozen", False):  # corriendo desde el código: mejor ver la página del Release
+            import webbrowser
+            webbrowser.open(self.latest[2])
+            return
+        self.state = "descargando"
+
+        def go():
+            import tempfile
+            import urllib.request
+            try:
+                path = Path(tempfile.gettempdir()) / f"IslaDinamica-Setup-{self.latest[0]}.exe"
+                req = urllib.request.Request(self.latest[1], headers={"User-Agent": "isla-dinamica"})
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    path.write_bytes(r.read())
+                subprocess.Popen([str(path), "--silent"], creationflags=subprocess.DETACHED_PROCESS)
+            except OSError:
+                self.state = "error"
+        threading.Thread(target=go, daemon=True).start()
+
+
 class PROCESSENTRY32(ctypes.Structure):
     _fields_ = [("size", wintypes.DWORD), ("usage", wintypes.DWORD), ("pid", wintypes.DWORD),
                 ("heap", ctypes.c_size_t), ("module", wintypes.DWORD), ("threads", wintypes.DWORD),
@@ -393,6 +522,8 @@ class ClaudeCode:
         self.mood_override = ("", 0)  # (ánimo, hasta) tras aprobar un permiso
         self.sound = True
         self.enabled = True  # False con la isla oculta
+        self.reply_enabled = True
+        self.reply = None  # oferta de "Responder" tras el último Stop (ver wait_reply)
         self.lock = threading.Lock()
 
     def current(self):
@@ -425,6 +556,50 @@ class ClaudeCode:
             if p["sid"] == sid:  # se respondió en la terminal o Claude siguió
                 p["done"].set()
 
+    # --- responder a Claude desde la isla ---
+    # Cuando Claude termina, el hook Stop espera REPLY_GRACE s. Si en ese rato tocas "Responder", espera
+    # a que escribas; lo escrito vuelve como {"decision": "block", "reason": ...}, que para Claude Code
+    # significa "no termines todavía: sigue con esto". Así le llega a ESA sesión, sin tocar la terminal.
+
+    def wait_reply(self, sid):
+        old, r = self.reply, {"sid": sid, "done": threading.Event(), "open": False, "text": None,
+                              "until": time.time() + REPLY_GRACE}
+        if old and not old["open"]:
+            old["cancel"] = True
+            old["done"].set()  # otra sesión terminó después: la oferta pasa a la más reciente
+        self.reply = r
+        r["done"].wait(REPLY_GRACE)
+        deadline = time.time() + REPLY_WAIT
+        while r["open"] and r["text"] is None and not r.get("cancel") and time.time() < deadline:
+            time.sleep(0.1)  # abriste el cuadro: esperar a que escribas (o canceles)
+        if self.reply is r:
+            self.reply = None
+        text = (r["text"] or "").strip()
+        return json.dumps({"decision": "block", "reason": text}).encode() if text else b""
+
+    def open_reply(self):
+        r = self.reply
+        if r and not r["done"].is_set() and not r.get("cancel"):
+            r["open"] = True
+            return r
+
+    def send_reply(self, r, text):
+        r["text"] = text
+        r["done"].set()
+        if text.strip():
+            with self.lock:
+                s = self.sessions.get(r["sid"])
+                if s:
+                    s.update(status="Pensando…", detail=[(first_line(text), GREY)], mood="focused",
+                             since=time.time(), took=None)
+
+    def drop_reply(self, sid=None):
+        """Cancela la oferta (de esa sesión, o la que haya)."""
+        r = self.reply
+        if r and (sid is None or r["sid"] == sid):
+            r["cancel"] = True
+            r["done"].set()
+
     def handle(self, ev):
         """Procesa un evento de hook; devuelve el cuerpo de la respuesta (bytes) para el hook."""
         name, sid = ev.get("hook_event_name"), ev.get("session_id", "?")
@@ -453,6 +628,10 @@ class ClaudeCode:
             self.drop_perms(sid)
         if name == "Stop" and self.sound:
             winsound.MessageBeep(winsound.MB_OK)
+        if name in ("UserPromptSubmit", "SessionEnd"):  # escribiste en la terminal: ya no hace falta
+            self.drop_reply(sid)
+        if name == "Stop" and self.reply_enabled and self.enabled:
+            return self.wait_reply(sid)
         if name != "PermissionRequest" or not self.enabled:
             return b""  # isla oculta: los permisos se responden en la terminal sin esperar
         p = {"sid": sid, "text": permission_text(tool, inp), "done": threading.Event(), "allow": None}
@@ -496,6 +675,11 @@ def serve(claude):
 
 def clamp(x, lo=0.0, hi=1.0):
     return max(lo, min(hi, x))
+
+
+def shade(col, k):
+    """col oscurecido (k = 0 negro, 1 igual): fondos tenues del color de acento."""
+    return "#%02x%02x%02x" % tuple(round(int(col[i:i + 2], 16) * k) for i in (1, 3, 5))
 
 
 def dpi_scale():
@@ -780,6 +964,12 @@ class Island:
         self.pinned = None  # session_id elegida a mano; None = la más reciente
         self.media, self.timer, self.cpu, self.claude = Media(), Timer(), Cpu(), ClaudeCode()
         self.levels, self.notes = Levels(), Notifications(self.media.loop)
+        loop = self.media.loop
+        self.weather, self.calendar, self.updater = Weather(loop), Calendar(loop), Updater(loop)
+        self.card = None  # tarjeta propia: {"kind": "update" | "cal", "until", ...}
+        self.update_offered = None  # versión que ya se ofreció (la tarjeta sale una sola vez)
+        self.cal_alerted = set()  # citas ya avisadas
+        self.reply_box = None  # ventana para escribirle a Claude
         self.apply_config()
         self.server = serve(self.claude)
         self.alert_until = self.stats_at = 0
@@ -813,6 +1003,11 @@ class Island:
     def apply_config(self):
         self.claude.sound = self.cfg["sound"]
         self.notes.enabled = self.cfg["notifications"]
+        self.claude.reply_enabled = self.cfg["reply"]
+        self.weather.enabled, self.calendar.enabled = self.cfg["weather"], self.cfg["calendar"]
+        self.updater.enabled = self.cfg["updates"]
+        self.accent = self.cfg["accent"]
+        MOODS["happy"] = self.accent  # el robot contento usa el color elegido
 
     def set(self, key, value):
         self.cfg[key] = value
@@ -825,23 +1020,49 @@ class Island:
             self.resize()
 
     def build_menu(self):
-        m = self.menu = tk.Menu(self.root, tearoff=0, font=("Segoe UI", 10))
-        self.vars = {k: tk.BooleanVar(value=self.cfg[k]) for k in ("sound", "hide_fullscreen", "notifications")}
+        font = ("Segoe UI", 10)
+        m = self.menu = tk.Menu(self.root, tearoff=0, font=font)
+        self.vars = {k: tk.BooleanVar(value=self.cfg[k]) for k in
+                     ("sound", "hide_fullscreen", "notifications", "translucent", "weather", "calendar", "updates",
+                      "reply")}
         self.vars["startup"] = tk.BooleanVar(value=STARTUP.exists())
-        self.size_var = tk.DoubleVar(value=self.cfg["size"])
-        sizes = tk.Menu(m, tearoff=0, font=("Segoe UI", 10))
-        for label, k in [("Normal", 1.0), ("Grande", 1.2), ("Muy grande", 1.4)]:
-            sizes.add_radiobutton(label=label, value=k, variable=self.size_var, command=lambda k=k: self.set("size", k))
-        m.add_cascade(label="Tamaño", menu=sizes)
-        for key, label in [("sound", "Sonidos"), ("notifications", "Mostrar notificaciones"),
-                           ("hide_fullscreen", "Ocultar en pantalla completa")]:
-            m.add_checkbutton(label=label, variable=self.vars[key],
-                              command=lambda key=key: self.set(key, self.vars[key].get()))
+        self.size_var, self.accent_var = tk.DoubleVar(value=self.cfg["size"]), tk.StringVar(value=self.cfg["accent"])
+
+        def check(menu, key, label):
+            menu.add_checkbutton(label=label, variable=self.vars[key],
+                                 command=lambda: self.set(key, self.vars[key].get()))
+
+        look = tk.Menu(m, tearoff=0, font=font)
+        for label, k in [("Tamaño normal", 1.0), ("Tamaño grande", 1.2), ("Tamaño muy grande", 1.4)]:
+            look.add_radiobutton(label=label, value=k, variable=self.size_var, command=lambda k=k: self.set("size", k))
+        look.add_separator()
+        for label, col in ACCENTS:
+            look.add_radiobutton(label=f"Color {label.lower()}", value=col, variable=self.accent_var,
+                                 command=lambda col=col: self.set("accent", col))
+        look.add_separator()
+        check(look, "translucent", "Translúcida")
+        m.add_cascade(label="Apariencia", menu=look)
+        show = tk.Menu(m, tearoff=0, font=font)
+        for key, label in [("notifications", "Notificaciones"), ("weather", "Clima"), ("calendar", "Próxima cita"),
+                           ("reply", "Responder a Claude desde la isla"), ("sound", "Sonidos")]:
+            check(show, key, label)
+        m.add_cascade(label="Mostrar", menu=show)
+        check(m, "hide_fullscreen", "Ocultar en pantalla completa")
         m.add_checkbutton(label="Iniciar con Windows", variable=self.vars["startup"],
                           command=lambda: set_startup(self.vars["startup"].get()))
+        check(m, "updates", "Buscar actualizaciones")
         m.add_separator()
         m.add_command(label="Ocultar", accelerator="Ctrl+Alt+I", command=self.toggle)
         m.add_command(label="Salir", command=self.quit)
+        m.configure(postcommand=self.menu_update_item)
+
+    def menu_update_item(self):
+        """Si hay versión nueva, el menú ofrece actualizar (arriba de todo)."""
+        label = f"Actualizar a la versión {self.updater.latest[0]}" if self.updater.latest else None
+        if label and self.menu.entrycget(0, "label") != label:
+            if self.menu.entrycget(0, "label").startswith("Actualizar"):
+                self.menu.delete(0)
+            self.menu.insert_command(0, label=label, command=self.updater.install)
 
     def popup(self, e):
         """Menú de ajustes. Un menú de Windows solo se cierra al hacer clic afuera si su ventana tiene el
@@ -908,6 +1129,21 @@ class Island:
         i = ids.index(sid)
         return sid, items[i][1], i + 1, len(items)
 
+    def check_cards(self, now):
+        """Tarjetas propias de la isla: versión nueva disponible, o una cita que empieza en 10 min."""
+        up = self.updater.latest
+        if up and self.update_offered != up[0]:
+            self.update_offered = up[0]
+            self.card = {"kind": "update", "until": now + 12}
+        nxt = self.calendar.next
+        if nxt:
+            mins = (nxt[1] - datetime.now(timezone.utc)).total_seconds() / 60
+            if 0 <= mins <= 10 and nxt not in self.cal_alerted:
+                self.cal_alerted.add(nxt)
+                self.card = {"kind": "cal", "until": now + 10, "title": nxt[0], "start": nxt[1]}
+                if self.cfg["sound"]:
+                    winsound.MessageBeep(winsound.MB_ICONASTERISK)
+
     def next_session(self):
         items = self.claude.ordered()
         if items:
@@ -934,18 +1170,28 @@ class Island:
         note = self.notes.current
         if note and hover and self.mode == "note":
             note["until"] = max(note["until"], now + 1)  # no se va mientras la lees
+        self.check_cards(now)
+        if self.reply_box and (self.claude.reply is not self.reply_box[1] or self.reply_box[1].get("cancel")):
+            self.close_reply_box(None)  # Claude ya siguió (respondiste en la terminal o se acabó el tiempo)
+        card = self.card if self.card and now < self.card["until"] else None
+        if card and hover and self.mode == "card":
+            card["until"] = max(card["until"], now + 1)
+        reply = self.claude.reply
+        replying = self.reply_box is not None or (reply and not reply.get("cancel") and now < reply["until"])
         if self.claude.perms:  # aunque haya hover: si se expandiera, los botones se escaparían del mouse
             mode = "perm"
         elif now < self.levels.until:
             mode = "level"
         elif note and now < note["until"]:
             mode = "note"
-        elif hover or now < self.alert_until or now < self.claude.flash_until:
+        elif card:
+            mode = "card"
+        elif hover or replying or now < self.alert_until or now < self.claude.flash_until:
             mode = "big"
         else:
             mode = "small"
         self.mode = mode
-        target = {"perm": PERM, "level": LEVEL, "note": NOTIF, "big": BIG, "small": SMALL}[mode]
+        target = {"perm": PERM, "level": LEVEL, "note": NOTIF, "card": NOTIF, "big": BIG, "small": SMALL}[mode]
         # resorte amortiguado: se pasa un poquito y vuelve, como en el iPhone
         self.vw = self.vw * 0.7 + (target[0] - self.w) * 0.1
         self.vh = self.vh * 0.7 + (target[1] - self.h) * 0.1
@@ -1000,8 +1246,15 @@ class Island:
         c.scale(self.S, self.S)
         c.translate(self.left_edge(), 0)
         self.shape(w, h)
-        c.set_source_rgb(0, 0, 0)
-        c.fill_preserve()
+        if self.cfg["translucent"]:  # vidrio oscuro: se ve un poco lo de atrás, con un borde sutil
+            c.set_source_rgba(0.03, 0.03, 0.05, 0.78)
+            c.fill_preserve()
+            c.set_source_rgba(1, 1, 1, 0.09)
+            c.set_line_width(1)
+            c.stroke_preserve()
+        else:
+            c.set_source_rgb(0, 0, 0)
+            c.fill_preserve()
         c.save()
         c.clip()  # el contenido no se sale de la isla mientras se anima
         near = clamp(1 - abs(w - target[0]) / 100 - abs(h - target[1]) / 40)  # fundido al llegar
@@ -1011,10 +1264,12 @@ class Island:
             self.draw_level(w, h, near)
         elif mode == "note":
             self.draw_note(w, h, near)
+        elif mode == "card":
+            self.draw_card(w, h, now, near)
         elif mode == "big":
             a = clamp((h - 100) / (BIG[1] - 100)) ** 2
             if now < self.alert_until:
-                p.text(w / 2, h / 2, "⏰  ¡Tiempo!", "symbig", GREEN, a, anchor="center")
+                p.text(w / 2, h / 2, "⏰  ¡Tiempo!", "symbig", self.accent, a, anchor="center")
             else:
                 self.draw_claude(w, now, mood, a)
                 p.line(18, 104, w - 18, 104, "#2a2a2e", a, 1)
@@ -1028,7 +1283,7 @@ class Island:
         bat = self.bat
         if bat:
             return (f"{'⚡' if bat[1] else '▮'} {bat[0]}%", "sym",
-                    GREEN if bat[1] else RED if bat[0] <= 20 else WHITE)
+                    self.accent if bat[1] else RED if bat[0] <= 20 else WHITE)
         return (f"CPU {self.cpu_pct}%  RAM {self.ram_pct}%", "small",
                 RED if max(self.cpu_pct, self.ram_pct) >= 90 else WHITE)
 
@@ -1038,17 +1293,29 @@ class Island:
         if m.playing:  # ecualizador animado
             for i in range(3):
                 bh = 3 + 5 * abs(math.sin(now * (5 + i * 1.7) + i))
-                p.line(44 + i * 4.5, h / 2 + 4.5, 44 + i * 4.5, h / 2 + 4.5 - bh, GREEN, a, 2.4)
+                p.line(44 + i * 4.5, h / 2 + 4.5, 44 + i * 4.5, h / 2 + 4.5 - bh, self.accent, a, 2.4)
         _, s, _, _ = self.session()
         if s and s["since"]:  # Claude trabajando: cuánto lleva
             p.text(w / 2, h / 2, mmss(now - s["since"]), "clock", MOODS["focused"], a, anchor="center")
         else:
             p.text(w / 2, h / 2, time.strftime("%H:%M"), "clock", WHITE, a, anchor="center")
+        mins = self.minutes_to_event()
         if left:
-            p.text(w - 18, h / 2, mmss(left), "small", GREEN, a, anchor="e")
+            txt, col = mmss(left), self.accent
+        elif mins is not None and mins <= 60:  # cita pronto: cuánto falta
+            txt, col = f"en {mins} min" if mins else "ahora", self.accent
+        elif self.bat:
+            txt, col = f"{self.bat[0]}%", self.sys_info()[2]
+        elif self.weather.temp is not None and self.cfg["weather"]:  # escritorio: el clima es más útil que la CPU
+            txt, col = f"{self.weather.icon} {self.weather.temp}°", WHITE
         else:
-            txt, col = (f"{self.bat[0]}%", self.sys_info()[2]) if self.bat else (f"{self.cpu_pct}%", WHITE)
-            p.text(w - 18, h / 2, txt, "small", col, a, anchor="e")
+            txt, col = f"{self.cpu_pct}%", WHITE
+        p.text(w - 18, h / 2, txt, "small", col, a, anchor="e")
+
+    def minutes_to_event(self):
+        nxt = self.calendar.next if self.cfg["calendar"] else None
+        if nxt:
+            return max(0, round((nxt[1] - datetime.now(timezone.utc)).total_seconds() / 60))
 
     def draw_level(self, w, h, a):
         p, c, L = self.p, self.p.c, self.levels
@@ -1113,6 +1380,88 @@ class Island:
         p.text(x, 49, p.fit(n["body"], "small", w - x - 22), "small", "#c8c8cc", a)
         self.hit(0, 0, w, h, lambda: n.update(until=0))  # clic = descartar
 
+    def draw_card(self, w, h, now, a):
+        """Tarjeta propia: versión nueva (con botón Actualizar) o cita que está por empezar."""
+        p, card = self.p, self.card
+        x0, y0, size = 14, (h - 40) / 2, 40
+        p.rrect(x0, y0, x0 + size, y0 + size, 11, shade(self.accent, 0.25), a)
+        if card["kind"] == "update":
+            robot(p, x0 + size / 2, y0 + size / 2 + 3, 26, "happy", now, a)
+            ver = self.updater.latest[0] if self.updater.latest else ""
+            title, body = f"Nueva versión {ver}", "Isla dinámica se puede actualizar"
+            if self.updater.state == "descargando":
+                body = "Descargando… se reinicia sola al terminar"
+            elif self.updater.state == "error":
+                body = "No se pudo descargar; prueba más tarde"
+        else:  # calendario: hojita con argollas
+            cx, cy = x0 + size / 2, y0 + size / 2
+            p.rrect(cx - 11, cy - 9, cx + 11, cy + 12, 3, WHITE, a)
+            p.rrect(cx - 11, cy - 9, cx + 11, cy - 3, 3, self.accent, a)
+            for dx in (-5, 5):
+                p.line(cx + dx, cy - 12, cx + dx, cy - 7, WHITE, a, 2)
+            mins = max(0, round((card["start"] - datetime.now(timezone.utc)).total_seconds() / 60))
+            title = card["title"]
+            body = f"Empieza {'ahora' if not mins else f'en {mins} min'} · {card['start'].strftime('%H:%M')}"
+        x = x0 + size + 12
+        right = w - 22
+        if card["kind"] == "update" and self.updater.state == "":
+            for label, act, bg, fg in [("Luego", lambda: card.update(until=0), "#2a2a30", WHITE),
+                                       ("Actualizar", self.updater.install, self.accent, "#000000")]:
+                bw = p.width(label, "btn") + 24
+                p.rrect(right - bw, h / 2 - 13, right, h / 2 + 13, 13, bg, a)
+                p.text(right - bw / 2, h / 2, label, "btn", fg, a, anchor="center")
+                self.hit(right - bw, 0, right, h, act)
+                right -= bw + 8
+        else:
+            self.hit(0, 0, w, h, lambda: card.update(until=0))  # clic = descartar
+        p.text(x, 23, p.fit(title, "title", right - x - 8), "title", WHITE, a)
+        p.text(x, 42, p.fit(body, "small", right - x - 8), "small", "#c8c8cc", a)
+
+    def open_reply_box(self):
+        """Cuadro para escribirle a Claude debajo de la isla. Acá sí se toma el foco: pediste escribir."""
+        r = self.claude.open_reply()
+        if not r or self.reply_box:
+            return
+        u, S = ctypes.windll.user32, self.S
+        before = u.GetForegroundWindow()
+        top = tk.Toplevel(self.root, bg="#3a3a40")  # el fondo hace de borde de 1 px
+        top.overrideredirect(True)
+        top.attributes("-topmost", True)
+        W, H = round(440 * S), round(46 * S)
+        top.geometry(f"{W}x{H}+{(self.root.winfo_screenwidth() - W) // 2}+{round((BIG[1] + 10) * S)}")
+        frame = tk.Frame(top, bg="#1c1c1e")
+        frame.pack(fill="both", expand=True, padx=1, pady=1)
+        tk.Label(frame, text="Claude ›", bg="#1c1c1e", fg=self.accent, font=("Segoe UI", 10, "bold")).pack(
+            side="left", padx=(12, 4))
+        tk.Label(frame, text="Enter envía · Esc cancela", bg="#1c1c1e", fg=GREY, font=("Segoe UI", 8)).pack(
+            side="right", padx=10)
+        entry = tk.Entry(frame, bg="#1c1c1e", fg=WHITE, insertbackground=WHITE, relief="flat", bd=0,
+                         font=("Segoe UI", 11))
+        entry.pack(side="left", fill="both", expand=True, pady=8)
+        self.reply_box = (top, r, before)
+        entry.bind("<Return>", lambda e: self.close_reply_box(entry.get()))
+        entry.bind("<Escape>", lambda e: self.close_reply_box(None))
+        top.update()
+        u.keybd_event(0x12, 0, 0, 0)  # Alt: Windows deja cambiar el foco solo tras una tecla
+        u.keybd_event(0x12, 0, 2, 0)
+        u.SetForegroundWindow(ctypes.c_void_p(u.GetParent(ctypes.c_void_p(top.winfo_id()))))
+        entry.focus_force()
+
+    def close_reply_box(self, text):
+        """text = lo que escribiste (se le manda a Claude) o None (cancelar)."""
+        if not self.reply_box:
+            return
+        top, r, before = self.reply_box
+        self.reply_box = None
+        if text and text.strip():
+            self.claude.send_reply(r, text)
+        else:
+            r["cancel"] = True
+            r["done"].set()
+        top.destroy()
+        if before:  # volver a la app en la que estabas
+            ctypes.windll.user32.SetForegroundWindow(ctypes.c_void_p(before))
+
     def draw_perm(self, w, h, now, mood, a):
         p, perms = self.p, self.claude.perms
         if not perms:
@@ -1156,7 +1505,21 @@ class Island:
             status += f"  ·  {mmss(now - s['since'])}"
         elif s and s["took"] and status.startswith("Listo"):
             status += f" en {mmss(s['took'])}"
-        p.text(x, 40, p.fit(status, "body", w - x - 22), "body", WHITE, a)
+        r = self.claude.reply
+        if r and s and r["sid"] == sid and self.reply_box is None and not r.get("cancel") and now < r["until"]:
+            bw, bx = 86, w - 22 - 86  # botón "Responder": el color se va vaciando con el tiempo que queda
+            frac = clamp((r["until"] - now) / REPLY_GRACE)
+            p.rrect(bx, 31, bx + bw, 49, 9, shade(self.accent, 0.35), a)
+            p.c.save()
+            p.c.rectangle(bx, 31, bw * frac, 18)
+            p.c.clip()
+            p.rrect(bx, 31, bx + bw, 49, 9, self.accent, a)
+            p.c.restore()
+            p.text(bx + bw / 2, 40, "Responder", "btn", WHITE, a, anchor="center")
+            self.hit(bx - 4, 26, bx + bw + 4, 58, self.open_reply_box)
+            p.text(x, 40, p.fit(status, "body", bx - x - 10), "body", WHITE, a)
+        else:
+            p.text(x, 40, p.fit(status, "body", w - x - 22), "body", WHITE, a)
         detail = s["detail"][:3] if s else [("abre claude en una terminal", GREY)]
         if detail:
             p.rrect(x, 52, w - 22, 58 + 13 * len(detail) + 5, 10, FIELD, a)
@@ -1235,9 +1598,16 @@ class Island:
         c.restore()
         d = datetime.now()
         x = x0 + size + 14
-        p.text(w - 22, y0 + 12, time.strftime("%H:%M"), "clock", WHITE, a, anchor="e")
-        p.text(w - 22, y0 + 31, f"{DAYS[d.weekday()]} {d.day} {MONTHS[d.month - 1]}", "small", GREY, a,
-               anchor="e")
+        cx1, _ = p.text(w - 22, y0 + 12, time.strftime("%H:%M"), "clock", WHITE, a, anchor="e")
+        if self.weather.temp is not None and self.cfg["weather"]:  # clima a la izquierda de la hora
+            p.text(cx1 - 8, y0 + 12, f"{self.weather.icon} {self.weather.temp}°", "small", GREY, a, anchor="e")
+        nxt = self.calendar.next if self.cfg["calendar"] else None
+        if nxt:  # próxima cita de hoy en vez de la fecha
+            when = nxt[1].strftime("%H:%M")
+            p.text(w - 22, y0 + 31, f"{when} {p.fit(nxt[0], 'small', 90)}", "small", self.accent, a, anchor="e")
+        else:
+            p.text(w - 22, y0 + 31, f"{DAYS[d.weekday()]} {d.day} {MONTHS[d.month - 1]}", "small", GREY, a,
+                   anchor="e")
         p.text(x, y0 + 12, p.fit(m.title or "Nada sonando", "title", w - x - 90), "title", WHITE, a)
         p.text(x, y0 + 31, p.fit(m.artist, "small", w - x - 90), "small", GREY, a)
         if m.end >= 1:
@@ -1256,8 +1626,8 @@ class Island:
         p.text(22, y, txt, font, col, a)
         label = mmss(left) if left else f"{self.timer.minutes} min"
         tw = p.width(label, "small") + 38
-        p.rrect(w - 22 - tw, y - 13, w - 22, y + 13, 13, "#14301f" if left else "#1f1f23", a)
-        ix, col = w - 22 - tw + 15, GREEN if left else WHITE  # cronómetro dibujado
+        p.rrect(w - 22 - tw, y - 13, w - 22, y + 13, 13, shade(self.accent, 0.22) if left else "#1f1f23", a)
+        ix, col = w - 22 - tw + 15, self.accent if left else WHITE  # cronómetro dibujado
         c.new_sub_path()
         c.arc(ix, y + 1, 5.5, 0, 2 * math.pi)
         c.set_line_width(1.5)

@@ -12,6 +12,8 @@ os.environ["ISLA_PORT"] = "47899"  # puerto aparte: no choca con la isla abierta
 import install_hooks
 import island
 
+island.REPLY_GRACE = 0.3  # que el Stop no espere 6 s en cada prueba
+
 HOOK = Path(__file__).parent / "claude_hook.py"
 
 
@@ -72,6 +74,21 @@ assert run_hook({**base, "hook_event_name": "Stop", "last_assistant_message": "H
 s = cc.current()[0]
 assert s["status"] == "Listo ✓" and s["since"] is None and s["took"] >= 0
 assert s["pid"] == os.getpid()  # el hook manda su proceso padre (este test) para ubicar la terminal
+# responder desde la isla: lo escrito vuelve como "block" y Claude sigue con eso
+def reply_when_offered(text):
+    def go():
+        while not cc.reply:
+            time.sleep(0.02)
+        cc.send_reply(cc.open_reply(), text)
+    threading.Thread(target=go, daemon=True).start()
+reply_when_offered("ahora agrega tests")
+out = json.loads(run_hook({**base, "hook_event_name": "Stop", "last_assistant_message": "Hecho"}))
+assert out == {"decision": "block", "reason": "ahora agrega tests"} and cc.current()[0]["status"] == "Pensando…"
+cc.reply_enabled = False  # apagado: el Stop no espera
+t0 = time.time()
+assert run_hook({**base, "hook_event_name": "Stop"}) == b"" and time.time() - t0 < 2
+cc.reply_enabled = True
+assert island.version_tuple("v1.10.0") > island.version_tuple("1.9.3")
 cc.handle({"session_id": "otra", "cwd": "C:/y/blog", "hook_event_name": "SessionStart"})
 assert [sid for sid, _ in cc.ordered()] == ["grace", "otra"]
 cc.handle({"session_id": "otra", "hook_event_name": "SessionEnd"})

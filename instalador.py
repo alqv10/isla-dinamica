@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 import tkinter as tk
 import zipfile
 from pathlib import Path
@@ -14,14 +15,43 @@ BUNDLE = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "IslaDinamica.z
 BG, FG, GREY, GREEN = "#111114", "#ffffff", "#9a9a9f", "#3ddc84"
 
 
+def island_running():
+    r = subprocess.run(["tasklist", "/fi", "IMAGENAME eq IslaDinamica.exe", "/fo", "csv", "/nh"],
+                       capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    return "IslaDinamica.exe" in r.stdout
+
+
+def close_island():
+    """Cierra la isla (y hooks en curso) y espera a que los procesos terminen de verdad: taskkill vuelve
+    antes, y mientras tanto Windows no deja reemplazar el .exe."""
+    for _ in range(30):
+        subprocess.run(["taskkill", "/f", "/im", "IslaDinamica.exe"], capture_output=True,
+                       creationflags=subprocess.CREATE_NO_WINDOW)
+        if not island_running():
+            return
+        time.sleep(0.5)
+
+
+def extract():
+    """Copia los archivos; si alguno sigue bloqueado (un hook que justo arrancó), cierra y reintenta."""
+    DEST.mkdir(parents=True, exist_ok=True)
+    for attempt in range(8):
+        try:
+            with zipfile.ZipFile(BUNDLE) as z:
+                z.extractall(DEST)
+            return
+        except PermissionError:
+            if attempt == 7:
+                raise
+            close_island()
+            time.sleep(1)
+
+
 def run_install(set_status, claude):
     set_status("Cerrando la isla si estaba abierta…")
-    subprocess.run(["taskkill", "/f", "/im", "IslaDinamica.exe"], capture_output=True,
-                   creationflags=subprocess.CREATE_NO_WINDOW)
+    close_island()
     set_status("Copiando archivos…")
-    DEST.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(BUNDLE) as z:
-        z.extractall(DEST)
+    extract()
     exe = DEST / "IslaDinamica.exe"
     set_status("Configurando…")
     args = [str(exe), "--install"] + ([] if claude else ["--no-claude"])
@@ -31,7 +61,25 @@ def run_install(set_status, claude):
     subprocess.Popen([str(exe)], cwd=DEST, creationflags=subprocess.DETACHED_PROCESS)
 
 
+def hooks_installed():
+    """¿La instalación anterior estaba conectada con Claude Code? (para respetarlo al actualizar)"""
+    try:
+        return "IslaDinamica" in (Path.home() / ".claude" / "settings.json").read_text(encoding="utf-8")
+    except OSError:
+        return False
+
+
 def main():
+    if "--silent" in sys.argv:  # actualización desde la isla: sin ventanas, misma configuración
+        try:
+            run_install(lambda text: None, hooks_installed())
+        except (OSError, RuntimeError, zipfile.BadZipFile) as e:  # sin cuadros de error: anotar y reabrir
+            log = Path(os.environ.get("TEMP", DEST)) / "IslaDinamica-actualizacion.log"
+            log.write_text(f"{time.ctime()}: no se pudo actualizar: {e!r}\n", encoding="utf-8")
+            exe = DEST / "IslaDinamica.exe"
+            if exe.exists():
+                subprocess.Popen([str(exe)], cwd=DEST, creationflags=subprocess.DETACHED_PROCESS)
+        return
     root = tk.Tk()
     root.title("Instalar Isla dinámica")
     root.configure(bg=BG, padx=28, pady=22)
