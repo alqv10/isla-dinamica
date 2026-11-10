@@ -1,0 +1,8 @@
+__pycache__/
+build/
+dist/
+*.spec
+icono.ico
+# material personal de la conversación original: no se publica
+conversacion.pdf
+capturas/

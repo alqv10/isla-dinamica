@@ -1,0 +1,63 @@
+# Isla dinámica para Windows
+
+Una píldora negra pegada arriba al centro de la pantalla, estilo Dynamic Island, conectada a **Claude Code**. Código abierto (MIT).
+
+![Isla abierta](docs/abierta.png)
+
+## Instalar
+
+**Fácil:** descarga `IslaDinamica-Setup.exe` desde [Releases](../../releases), ábrelo y pulsa **Instalar**. No hace falta Python ni permisos de administrador. Se instala en `%LOCALAPPDATA%\Programs\IslaDinamica`, se conecta con Claude Code y arranca sola con Windows. Se desinstala desde *Configuración → Aplicaciones*.
+
+> Windows puede mostrar "Windows protegió su PC" porque el .exe no está firmado: *Más información → Ejecutar de todas formas*.
+
+**Desde el código:**
+
+```
+pip install -r requirements.txt
+python install_hooks.py      # conecta con Claude Code (python install_hooks.py --remove para quitar)
+pythonw island.py
+```
+
+## Qué hace
+
+**Claude Code**
+- Un robot muestra qué hace Claude: pensando, leyendo, editando (con el diff), ejecutando comandos… Sus ojos cambian con el ánimo: listo, trabajando, te necesita, permiso aprobado, sin sesiones.
+- Mientras trabaja, la isla cerrada muestra cuánto lleva; al terminar se abre unos segundos, suena un aviso y dice cuánto tardó.
+- Los pedidos de permiso aparecen en la isla con **Permitir** y **Denegar**. Si no respondes en 100 s, la pregunta vuelve a la terminal.
+- Varias sesiones: clic en **‹ 1/2 ›** para cambiar. Clic en el nombre del proyecto o en el robot para traer su terminal al frente.
+
+| | |
+|---|---|
+| ![Cerrada](docs/cerrada.png) | ![Permiso](docs/permiso.png) |
+| ![Notificación](docs/notificacion.png) | ![Volumen](docs/volumen.png) |
+
+**Además**
+- Música (Spotify, navegador…) con carátula, barra de progreso y botones animados.
+- Notificaciones de Windows (WhatsApp, Discord, correo…) unos segundos; clic para descartar.
+- Barra al cambiar el volumen o el brillo.
+- Reloj, fecha, batería en laptops; CPU y RAM en PCs de escritorio.
+- Temporizador: rueda del mouse = minutos, clic = iniciar/parar.
+- Nítida en pantallas con escala 125–200 %, con animaciones suaves.
+
+**Uso**
+- Pasa el mouse para expandir.
+- Mostrar u ocultar: clic en el robot de la bandeja de Windows o **Ctrl+Alt+I**. Oculta, los permisos se responden en la terminal.
+- Clic derecho: tamaño, sonidos, notificaciones, ocultar en pantalla completa, iniciar con Windows, salir.
+
+## Privacidad
+
+Todo pasa en tu PC: Claude Code le avisa a la isla por `127.0.0.1` (puerto 47823) y la isla no se conecta a internet. Si la isla está cerrada, Claude Code funciona normal.
+
+## Desarrollo
+
+- Tests: `python test_island.py`
+- Armar el instalador: `pip install pyinstaller` y `python build.py` → `dist/IslaDinamica-Setup.exe`
+
+| Archivo | Qué es |
+|---|---|
+| `island.py` | La isla (tkinter + cairo sobre una ventana con transparencia por píxel) |
+| `claude_hook.py` | Hook que Claude Code ejecuta en cada evento; se lo pasa a la isla |
+| `install_hooks.py` | Agrega/quita los hooks en `~/.claude/settings.json` (deja copia `.bak`) |
+| `app.py`, `instalador.py`, `build.py` | El .exe, el instalador y cómo se arman |
+
+Licencia MIT.
