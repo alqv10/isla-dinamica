@@ -10,9 +10,10 @@ from pathlib import Path
 
 os.environ["ISLA_PORT"] = "47899"  # puerto aparte: no choca con la isla abierta ni con sesiones reales
 import install_hooks
+import claude
 import island
 
-island.REPLY_GRACE = 0.3  # que el Stop no espere 6 s en cada prueba
+claude.REPLY_GRACE = 0.3  # que el Stop no espere 6 s en cada prueba
 
 HOOK = Path(__file__).parent / "claude_hook.py"
 
@@ -56,10 +57,10 @@ t0 = time.time()
 assert run_hook(perm) == b"" and time.time() - t0 < 5 and not cc.perms
 cc.enabled = True
 
-island.PERMISSION_WAIT = 0.3  # nadie responde: el hook no decide y Claude Code pregunta en la terminal
+claude.PERMISSION_WAIT = 0.3  # nadie responde: el hook no decide y Claude Code pregunta en la terminal
 assert run_hook(perm) == b""
 
-island.PERMISSION_WAIT = 10  # respondido en la terminal: PostToolUse libera el pedido pendiente
+claude.PERMISSION_WAIT = 10  # respondido en la terminal: PostToolUse libera el pedido pendiente
 t = threading.Thread(target=lambda: run_hook(perm))
 t.start()
 while not cc.perms:
