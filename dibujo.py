@@ -16,7 +16,6 @@ SMALL, BIG, PERM = (230, 34), (480, 214), (520, 44)  # en px lógicos (a 100 % d
 LEVEL, NOTIF = (300, 40), (440, 64)  # barra de volumen/brillo y notificación
 
 
-BIG_COMPANION = (480, 118)  # abierta sin tarjeta de Claude Code: música, clima y calendario
 
 
 ACCENTS = [("Verde", "#3ddc84"), ("Morado", "#a78bfa"), ("Azul", "#4cc2ff"), ("Naranja", "#ff9f43"),
@@ -104,7 +103,7 @@ B = cairo.FONT_WEIGHT_BOLD
 
 FONTS = {"title": ("Segoe UI", 10, B), "body": ("Segoe UI", 10), "small": ("Segoe UI", 9),
          "tiny": ("Segoe UI", 8), "clock": ("Segoe UI", 11, B), "mono": ("Consolas", 8),
-         "btn": ("Segoe UI", 9, B), "sym": ("Segoe UI Symbol", 9), "symbig": ("Segoe UI Symbol", 18)}
+         "btn": ("Segoe UI", 9, B), "sym": ("Segoe UI Symbol", 9), "symbig": ("Segoe UI Symbol", 18), "big": ("Segoe UI", 18, B)}
 
 
 class Paint:
@@ -342,7 +341,10 @@ def robot_image():
     return im
 
 
-WIN = (BIG[0] + 90, BIG[1] + 30)  # ventana fija; la isla se dibuja adentro (margen para el rebote)
+# Bloques de la isla abierta (widgets): nombre, alto. El usuario elige cuáles y en qué orden.
+WIDGETS = {"claude": ("Claude Code", 104), "music": ("Música", 110), "today": ("Hoy: clima, fecha y cita", 58),
+           "system": ("Sistema: CPU, RAM y batería", 52)}
+WIN = (BIG[0] + 90, 6 + sum(h for _, h in WIDGETS.values()) + 30)  # ventana fija: entra la isla más alta posible
 
 
 SHOULDER = 9  # radio de las curvas donde la isla se une al borde de arriba

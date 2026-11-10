@@ -39,7 +39,10 @@ DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications"
             "character": "robot", "body": "#f2f2f2",
             "mode": "claude",  # "claude" | "companion"
             "monitor": "primary",  # "primary", "mouse" o el nombre de una pantalla, como \\.\DISPLAY2
-            "screenshots": True, "clipboard_text": False, "privacy": True}
+            "screenshots": True, "clipboard_text": False, "privacy": True,
+            "widgets": ["claude", "music"],
+            # atajos: en teclados en español Ctrl+Alt = AltGr, por eso solo uno viene puesto
+            "hotkeys": {"toggle": "Ctrl+Alt+I", "focus": "", "play": "", "settings": ""}}  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
 
 
 STARTUP = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/Isla dinamica.lnk"
@@ -79,7 +82,7 @@ def start_tray(toggle, quit_, settings):
         import pystray
     except ImportError:
         return None
-    menu = pystray.Menu(pystray.MenuItem("Mostrar / ocultar  (Ctrl+Alt+I)", lambda: toggle(), default=True),
+    menu = pystray.Menu(pystray.MenuItem("Mostrar / ocultar", lambda: toggle(), default=True),
                         pystray.MenuItem("Ajustes…", lambda: settings()),
                         pystray.MenuItem("Salir", lambda: quit_()))
     tray = pystray.Icon("isla-dinamica", robot_image().resize((64, 64), Image.LANCZOS), "Isla dinámica", menu)
@@ -87,15 +90,58 @@ def start_tray(toggle, quit_, settings):
     return tray
 
 
-def hotkey_loop(toggle):
-    """Atajo global Ctrl+Alt+I: mostrar/ocultar (si otra app ya lo usa, simplemente no se registra)."""
-    u = ctypes.windll.user32
-    if not u.RegisterHotKey(None, 1, 0x0001 | 0x0002 | 0x4000, ord("I")):  # MOD_ALT|MOD_CONTROL|MOD_NOREPEAT
-        return
-    msg = wintypes.MSG()
-    while u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
-        if msg.message == 0x0312:  # WM_HOTKEY
-            toggle()
+HOTKEY_ACTIONS = [("toggle", "Mostrar u ocultar la isla"), ("focus", "Empezar o terminar el enfoque"),
+                  ("play", "Pausar o seguir la música"), ("settings", "Abrir los ajustes")]
+MODS = {"Ctrl": 0x2, "Alt": 0x1, "Shift": 0x4, "Win": 0x8}
+KEYS = {**{chr(c): c for c in range(ord("A"), ord("Z") + 1)}, **{str(d): ord(str(d)) for d in range(10)},
+        **{f"F{n}": 0x6F + n for n in range(1, 13)}, "Espacio": 0x20, "Inicio": 0x24, "Fin": 0x23,
+        "Arriba": 0x26, "Abajo": 0x28, "Izquierda": 0x25, "Derecha": 0x27, "Insert": 0x2D, "Pausa": 0x13}
+
+
+def parse_hotkey(text):
+    """"Ctrl+Alt+I" -> (modificadores, tecla virtual), o None si no es un atajo válido."""
+    parts = [p.strip() for p in (text or "").split("+") if p.strip()]
+    if len(parts) < 2 or parts[-1] not in KEYS or not all(p in MODS for p in parts[:-1]):
+        return None
+    mods = 0
+    for p in parts[:-1]:
+        mods |= MODS[p]
+    return mods, KEYS[parts[-1]]
+
+
+class Hotkeys:
+    """Atajos globales de Windows (RegisterHotKey). Corren en un hilo propio con su cola de mensajes;
+    al cambiarlos se cierra ese hilo y se abre otro con los nuevos."""
+    def __init__(self, on_action):
+        self.on_action, self.thread_id, self.failed = on_action, None, set()
+
+    def apply(self, mapping):
+        """mapping: {"toggle": "Ctrl+Alt+I", …}. Devuelve las acciones cuyo atajo ya usa otra app."""
+        u = ctypes.windll.user32
+        if self.thread_id:
+            u.PostThreadMessageW(self.thread_id, 0x0012, 0, 0)  # WM_QUIT al hilo anterior
+        ready = threading.Event()
+
+        def run():
+            self.thread_id = ctypes.windll.kernel32.GetCurrentThreadId()
+            ids, failed = {}, set()
+            for i, (action, text) in enumerate(mapping.items(), start=1):
+                parsed = parse_hotkey(text)
+                if parsed and u.RegisterHotKey(None, i, parsed[0] | 0x4000, parsed[1]):  # MOD_NOREPEAT
+                    ids[i] = action
+                elif parsed:
+                    failed.add(action)
+            self.failed = failed
+            ready.set()
+            msg = wintypes.MSG()
+            while u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+                if msg.message == 0x0312 and msg.wParam in ids:  # WM_HOTKEY
+                    self.on_action(ids[msg.wParam])
+            for i in ids:
+                u.UnregisterHotKey(None, i)
+        threading.Thread(target=run, daemon=True, name="atajos").start()
+        ready.wait(2)
+        return self.failed
 
 
 class Island:
@@ -136,8 +182,9 @@ class Island:
         self.server = serve(self.claude)
         self.alert_until = self.stats_at = 0
         self.hidden, self.mode = False, "small"
-        self.shown, self.quitting = True, False  # mostrar/ocultar a mano (bandeja o Ctrl+Alt+I)
+        self.shown, self.quitting = True, False  # mostrar/ocultar a mano (bandeja o atajo)
         self.cleared = False  # ya se borró la ventana estando oculta
+        self.hit_dy = 0  # corrimiento de las zonas clicables del bloque que se está dibujando
         self.keep_open_until = 0  # abierta a la fuerza (menú de ajustes recién usado)
         self.drag = None  # (x inicial, y inicial) de un arrastre sobre la música
         self.ac = self.drives = None  # cargador y memorias USB (None = todavía no se miró)
@@ -154,7 +201,9 @@ class Island:
         self.build_menu()
         self.settings, self.settings_requested = None, False  # ventana de ajustes (ajustes.py)
         self.tray = start_tray(self.toggle, self.request_quit, self.request_settings)
-        threading.Thread(target=hotkey_loop, args=(self.toggle,), daemon=True).start()
+        self.actions = []  # acciones pedidas desde otros hilos (atajos): se hacen en el próximo tick
+        self.hotkeys = Hotkeys(self.actions.append)
+        self.hotkeys.apply(self.cfg["hotkeys"])
         root.bind("<Button-3>", self.popup)
         root.bind("<MouseWheel>", self.wheel)
         root.bind("<ButtonPress-1>", self.press_start)
@@ -327,13 +376,15 @@ class Island:
         check(m, "updates", "Buscar actualizaciones")
         m.add_separator()
         m.add_command(label="Ver registro de errores", command=self.open_log)
-        m.add_command(label="Ocultar", accelerator="Ctrl+Alt+I", command=self.toggle)
+        m.add_command(label="Ocultar", accelerator=self.cfg["hotkeys"].get("toggle", ""), command=self.toggle)
         m.add_command(label="Salir", command=self.quit)
         m.configure(postcommand=self.menu_update_item)
 
     def menu_update_item(self):
         """Antes de abrir el menú: el texto del enfoque y, si hay versión nueva, "Actualizar" arriba de todo."""
         for i in range(self.menu.index("end") + 1):
+            if self.menu.type(i) == "command" and self.menu.entrycget(i, "label") == "Ocultar":
+                self.menu.entryconfig(i, accelerator=self.cfg["hotkeys"].get("toggle", ""))
             if self.menu.type(i) == "command" and "enfoque" in self.menu.entrycget(i, "label"):
                 self.menu.entryconfig(i, label="Terminar enfoque" if self.focus.phase else "Empezar enfoque (25 + 5 min)")
         label = f"Actualizar a la versión {self.updater.latest[0]}" if self.updater.latest else None
@@ -371,6 +422,23 @@ class Island:
             registro.write("sin errores hasta ahora")
         os.startfile(registro.LOG)
 
+    def run_action(self, action):
+        """Lo que hace cada atajo de teclado."""
+        if action == "toggle":
+            self.toggle()
+        elif action == "focus":
+            self.toggle_focus()
+        elif action == "play":
+            self.media.send("try_toggle_play_pause_async")
+            self.pressed["play"] = time.time()
+        elif action == "settings":
+            self.open_settings()
+
+    def set_hotkey(self, action, text):
+        """Cambia un atajo; devuelve True si quedó registrado (False si otra app ya lo usa)."""
+        self.set("hotkeys", {**self.cfg["hotkeys"], action: text})
+        return action not in self.hotkeys.apply(self.cfg["hotkeys"])
+
     def request_settings(self):
         self.settings_requested = True  # desde el hilo de la bandeja: se abre en el próximo tick
 
@@ -399,9 +467,22 @@ class Island:
         """Coordenadas de un evento del mouse, en px lógicos de la isla."""
         return e.x / self.S - self.left_edge(), e.y / self.S
 
+    def blocks(self):
+        """[(bloque, y de arriba, alto)] de la isla abierta, según los widgets elegidos."""
+        names = [b for b in self.cfg["widgets"] if b in WIDGETS and not (b == "claude" and self.companion)]
+        out, y = [], 0 if names[:1] == ["claude"] else 6
+        for b in names or ["music"]:
+            out.append((b, y, WIDGETS[b][1]))
+            y += WIDGETS[b][1]
+        return out
+
+    def big_size(self):
+        b = self.blocks()
+        return BIG[0], b[-1][1] + b[-1][2] + 4
+
     def in_music(self, y):
-        """¿Está y sobre la parte de música de la isla abierta?"""
-        return self.mode == "big" and (self.companion or y >= 106)
+        """¿Está y sobre el bloque de música de la isla abierta?"""
+        return self.mode == "big" and any(b == "music" and top <= y < top + h for b, top, h in self.blocks())
 
     def press_start(self, e):
         x, y = self.local(e)
@@ -452,7 +533,8 @@ class Island:
 
     def hit(self, x1, y1, x2, y2, action, name=None):
         """Zona clicable; con name, el botón se anima al pasar el mouse y al hacer clic."""
-        self.hits.append((x1, y1, x2, y2, action, name))
+        dy = self.hit_dy  # los bloques se dibujan corridos hacia abajo: sus zonas también
+        self.hits.append((x1, y1 + dy, x2, y2 + dy, action, name))
 
     def press(self, name, now):
         """Escala del botón tras un clic: se hunde y rebota (1 = reposo)."""
@@ -625,6 +707,8 @@ class Island:
         if self.settings_requested:
             self.settings_requested = False
             self.open_settings()
+        while self.actions:
+            self.run_action(self.actions.pop(0))
         if now - self.stats_at >= 1:
             self.stats_at = now
             self.bat, self.cpu_pct, self.ram_pct = battery(), self.cpu.percent(), ram()
@@ -679,7 +763,7 @@ class Island:
         else:
             mode = "small"
         self.mode = mode
-        big = BIG_COMPANION if self.companion else BIG
+        big = self.big_size()
         target = {"perm": PERM, "level": LEVEL, "note": NOTIF, "card": NOTIF, "big": big, "small": SMALL}[mode]
         # resorte amortiguado: se pasa un poquito y vuelve, como en el iPhone
         self.vw = self.vw * 0.7 + (target[0] - self.w) * 0.1
@@ -732,7 +816,7 @@ class Island:
         c.set_operator(cairo.OPERATOR_CLEAR)
         c.paint()
         c.set_operator(cairo.OPERATOR_OVER)
-        self.hits = []
+        self.hits, self.hit_dy = [], 0
         if not self.shown or (self.hidden and mode != "perm"):  # oculta, o juego/video en pantalla completa
             return
         c.scale(self.S, self.S)
@@ -759,15 +843,11 @@ class Island:
         elif mode == "card":
             self.draw_card(w, h, now, near)
         elif mode == "big":
-            a = clamp((h - (40 if self.companion else 100)) / (target[1] - (40 if self.companion else 100))) ** 2
+            a = clamp((h - 40) / (target[1] - 40)) ** 2
             if now < self.alert_until:
                 p.text(w / 2, h / 2, "⏰  ¡Tiempo!", "symbig", self.accent, a, anchor="center")
-            elif self.companion:
-                self.draw_music(w, now, a, dy=-98)
             else:
-                self.draw_claude(w, now, mood, a)
-                p.line(18, 104, w - 18, 104, "#2a2a2e", a, 1)
-                self.draw_music(w, now, a)
+                self.draw_blocks(w, now, mood, a)
         else:
             self.draw_small(w, h, now, mood, clamp(1 - (h - SMALL[1]) / 30) ** 2)
         c.restore()
@@ -1001,7 +1081,7 @@ class Island:
         top.overrideredirect(True)
         top.attributes("-topmost", True)
         W, H = round(440 * S), round(46 * S)
-        top.geometry(f"{W}x{H}+{self.X + (self.W - W) // 2}+{self.Y + round((BIG[1] + 10) * S)}")
+        top.geometry(f"{W}x{H}+{self.X + (self.W - W) // 2}+{self.Y + round((self.big_size()[1] + 10) * S)}")
         frame = tk.Frame(top, bg="#1c1c1e")
         frame.pack(fill="both", expand=True, padx=1, pady=1)
         tk.Label(frame, text="Claude ›", bg="#1c1c1e", fg=self.accent, font=("Segoe UI", 10, "bold")).pack(
@@ -1051,6 +1131,58 @@ class Island:
             self.hit(x, 0, x + 70, h, lambda answer=answer: self.claude.answer(answer))
         if more:
             p.text(w - 20, h / 2, f"+{more}", "tiny", GREY, a, anchor="e")
+
+    def draw_blocks(self, w, now, mood, a):
+        """La isla abierta: los bloques elegidos, uno debajo del otro con una línea entre medio."""
+        c = self.p.c
+        names = [b for b, _, _ in self.blocks()]
+        for i, (b, top, h) in enumerate(self.blocks()):
+            if i:
+                self.p.line(18, top, w - 18, top, "#2a2a2e", a, 1)
+            c.save()
+            if b == "music":  # el bloque de música se ubica solo (usa coordenadas de la isla)
+                self.draw_music(w, now, a, dy=top - 104, show_sys="system" not in names)
+            else:
+                c.translate(0, top)
+                self.hit_dy = top
+                {"claude": lambda: self.draw_claude(w, now, mood, a), "today": lambda: self.draw_today(w, a),
+                 "system": lambda: self.draw_system(w, a)}[b]()
+                self.hit_dy = 0
+            c.restore()
+
+    def draw_today(self, w, a):
+        """Hoy: clima grande, fecha completa y próxima cita."""
+        p, d = self.p, datetime.now()
+        x = 22
+        if self.weather.temp is not None and self.cfg["weather"]:
+            p.text(x, 30, self.weather.icon, "symbig", WHITE, a)
+            p.text(x + 34, 30, f"{self.weather.temp}°", "big", WHITE, a)
+            x += 104
+        full_days = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        full_months = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
+                       "octubre", "noviembre", "diciembre"]
+        p.text(x, 21, f"{full_days[d.weekday()].capitalize()} {d.day} de {full_months[d.month - 1]}", "title", WHITE, a)
+        nxt = self.calendar.next if self.cfg["calendar"] else None
+        if nxt:
+            mins = self.minutes_to_event()
+            when = f"en {mins} min" if mins is not None and mins < 60 else nxt[1].strftime("%H:%M")
+            p.text(x, 40, p.fit(f"{when} · {nxt[0]}", "small", w - x - 22), "small", self.accent, a)
+        else:
+            p.text(x, 40, "Sin citas por hoy", "small", GREY, a)
+
+    def draw_system(self, w, a):
+        """Sistema: barras de CPU, RAM y batería (si hay)."""
+        p = self.p
+        bars = [("CPU", self.cpu_pct), ("RAM", self.ram_pct)] + ([("Batería", self.bat[0])] if self.bat else [])
+        col_w = (w - 44) / len(bars)
+        for i, (label, pct) in enumerate(bars):
+            x = 22 + i * col_w
+            hot = pct >= 90 if label != "Batería" else pct <= 20
+            p.text(x, 18, label, "small", GREY, a)
+            p.text(x + col_w - 16, 18, f"{pct}%", "small", RED if hot else WHITE, a, anchor="e")
+            p.line(x, 36, x + col_w - 16, 36, "#2c2c31", a, 6)
+            if pct:
+                p.line(x, 36, x + (col_w - 16) * pct / 100, 36, RED if hot else self.accent, a, 6)
 
     def draw_claude(self, w, now, mood, a):
         p = self.p
@@ -1141,7 +1273,7 @@ class Island:
         x1, x2 = bx + d * 6 * k, bx + d * 8 * k
         p.rrect(min(x1, x2), y - 5.5 * k, max(x1, x2), y + 5.5 * k, 1, WHITE, a)
 
-    def draw_music(self, w, now, a, dy=0):
+    def draw_music(self, w, now, a, dy=0, show_sys=True):
         p, c, m, left = self.p, self.p.c, self.media, self.timer.left()
         y0, size, x0 = 116 + dy, 52, 22
         if m.art and Image and self.art[0] is not m.art:
@@ -1192,14 +1324,15 @@ class Island:
             p.line(x1, y, x2, y, "#3a3a3e", a, 4)
             p.line(x1, y, x1 + (x2 - x1) * clamp(pos / m.end), y, WHITE, a, 4)
             p.text(w - 22, y, f"{mmss(pos)} / {mmss(m.end)}", "tiny", GREY, a, anchor="e")
-        y, cx = BIG[1] - 24 + dy, w / 2
+        y, cx = 190 + dy, w / 2
         self.draw_play(cx, y, now, a)
         self.hit(cx - 18, y - 18, cx + 18, y + 18, lambda: self.media.send("try_toggle_play_pause_async"), "play")
         for cmd, name, d in [("try_skip_previous_async", "prev", -1), ("try_skip_next_async", "next", 1)]:
             self.draw_skip(cx + d * 50, y, d, name, now, a)
             self.hit(cx + d * 50 - 18, y - 18, cx + d * 50 + 18, y + 18, lambda cmd=cmd: self.media.send(cmd), name)
-        txt, font, col = self.sys_info()
-        p.text(22, y, txt, font, col, a)
+        if show_sys:
+            txt, font, col = self.sys_info()
+            p.text(22, y, txt, font, col, a)
         if self.focus.phase:  # el enfoque usa la misma ficha
             left = self.focus.left()
             label = ("Enfoque " if self.focus.phase == "work" else "Descanso ") + mmss(left)

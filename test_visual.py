@@ -58,6 +58,10 @@ def card(**kw):
 big = island.BIG
 check("cerrada", "small", island.SMALL)
 check("abierta", "big", big)
+for combo in (["claude", "music", "today", "system"], ["today", "music"], ["system"], ["music", "claude", "today"]):
+    isl.cfg["widgets"] = combo
+    check("widgets-" + "-".join(combo), "big", isl.big_size())
+isl.cfg["widgets"] = ["claude", "music"]
 check("permiso", "perm", island.PERM,
       lambda: cc.perms.append({"sid": "a", "text": "git push", "done": None, "allow": None}))
 cc.perms.clear()
@@ -90,7 +94,7 @@ for kind in [k for _, k in island.CHARACTERS]:
 cc.mood_override = ("", 0)
 isl.cfg.update(mode="companion", translucent=True, accent="#a78bfa")
 isl.apply_config()
-check("compañero-abierta", "big", island.BIG_COMPANION)
+check("compañero-abierta", "big", isl.big_size())
 check("compañero-cerrada", "small", island.SMALL)
 
 try:  # la ventana de ajustes se arma sin errores
