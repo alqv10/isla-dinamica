@@ -48,11 +48,13 @@ PORT = int(os.environ.get("ISLA_PORT", 47823))  # el mismo en claude_hook.py
 PERMISSION_WAIT = 100  # s esperando un clic antes de devolver el permiso a la terminal
 SMALL, BIG, PERM = (230, 34), (480, 214), (520, 44)  # en px lógicos (a 100 % de escala)
 LEVEL, NOTIF = (300, 40), (440, 64)  # barra de volumen/brillo y notificación
+BIG_COMPANION = (480, 118)  # abierta sin tarjeta de Claude Code: música, clima y calendario
 CONFIG = Path.home() / ".isla-dinamica.json"
 VERSION = "1.1.0"
 REPO = "alqv10/isla-dinamica"
 DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications": True, "accent": "#3ddc84",
-            "translucent": False, "weather": True, "calendar": True, "updates": True, "reply": True}
+            "translucent": False, "weather": True, "calendar": True, "updates": True, "reply": True,
+            "character": "robot", "body": "#f2f2f2", "mode": "claude"}  # mode: "claude" | "companion"
 ACCENTS = [("Verde", "#3ddc84"), ("Morado", "#a78bfa"), ("Azul", "#4cc2ff"), ("Naranja", "#ff9f43"),
            ("Rosa", "#ff6b9d")]
 REPLY_GRACE = 6  # s que la isla ofrece "Responder" cuando Claude termina (el turno espera ese rato)
@@ -848,28 +850,24 @@ class Paint:
         return x, x + wd
 
 
-def robot(p, x, y, s, mood, now, a=1.0):
-    """Cabeza de robot de ancho ~s centrada en (x, y): respira, parpadea y los ojos cambian con el ánimo."""
-    col, e = MOODS[mood], s * 0.11
-    y += math.sin(now * 2.2) * s * 0.025
-    glow = 0.55 + 0.45 * math.sin(now * 7) if mood == "focused" else 1  # la antena titila mientras trabaja
-    lw = max(1.2, s / 18)
-    p.line(x, y - s * 0.38, x, y - s * 0.52, "#dddddd", a, lw)
-    p.circle(x, y - s * 0.55, e * 0.85, col, a * glow)
-    for side in (-1, 1):  # orejas
-        p.oval(x + side * s * 0.5 - e, y - e * 1.4, x + side * s * 0.5 + e, y + e * 1.4, "#c8c8cc", a)
-    p.oval(x - s * 0.46, y - s * 0.4, x + s * 0.46, y + s * 0.4, "#f2f2f2", a)
-    p.rrect(x - s * 0.33, y - s * 0.2, x + s * 0.33, y + s * 0.2, s * 0.2, "#15151b", a)
+CHARACTERS = [("Robot", "robot"), ("Chispa", "chispa"), ("Burbuja", "burbuja"), ("Gato", "gato")]
+BODY_COLORS = [("Blanco", "#f2f2f2"), ("Coral", "#ff9478"), ("Lila", "#c9b8ff"), ("Celeste", "#8fd8ff"),
+               ("Menta", "#93eeb5"), ("Amarillo", "#ffe08a")]
+INK = "#15151b"  # ojos y visor oscuros
+
+
+def eyes(p, x, y, gap, e, mood, col, lw, now):
+    """Par de ojos según el ánimo: ^ ^ contento, corazones, rayas dormido, chicos trabajando, grandes curioso."""
     blink = mood != "sleep" and now % 4.3 < 0.12
-    for ex in (x - s * 0.15, x + s * 0.15):
+    for ex in (x - gap, x + gap):
         if mood == "sleep" or blink:
-            p.line(ex - e * 0.8, y, ex + e * 0.8, y, col, a, lw)
+            p.line(ex - e * 0.8, y, ex + e * 0.8, y, col, p.alpha, lw)
         elif mood == "happy":  # ^ ^
             p.c.new_sub_path()
             p.c.arc(ex, y + e * 0.5, e * 0.85, math.radians(-155), math.radians(-25))
             p.c.set_line_width(lw)
             p.c.set_line_cap(cairo.LINE_CAP_ROUND)
-            p.rgba(col, a)
+            p.rgba(col, p.alpha)
             p.c.stroke()
         elif mood == "love":
             c = p.c
@@ -880,11 +878,71 @@ def robot(p, x, y, s, mood, now, a=1.0):
             c.curve_to(-1.3, -0.1, -0.6, -1.1, 0, -0.35)
             c.curve_to(0.6, -1.1, 1.3, -0.1, 0, 0.75)
             c.restore()
-            p.rgba(col, a)
+            p.rgba(col, p.alpha)
             c.fill()
         else:  # focused: ojos chicos; curious: ojos grandes
             k = 0.6 if mood == "focused" else 0.9
-            p.oval(ex - e * k, y - e * k * 1.3, ex + e * k, y + e * k * 1.3, col, a)
+            p.oval(ex - e * k, y - e * k * 1.3, ex + e * k, y + e * k * 1.3, col, p.alpha)
+
+
+def character(p, kind, x, y, s, mood, now, a=1.0, body="#f2f2f2"):
+    """Personaje de ancho ~s centrado en (x, y): respira, parpadea y los ojos cambian con el ánimo.
+    El color del ánimo va en un detalle propio de cada uno (antena, destello, brote, orejas)."""
+    col, e = MOODS[mood], s * 0.11
+    p.alpha = a
+    busy = mood == "focused"
+    y += math.sin(now * (4.5 if busy else 2.2)) * s * 0.025
+    glow = 0.55 + 0.45 * math.sin(now * 7) if busy else 1  # titila mientras trabaja
+    lw = max(1.2, s / 18)
+    edge = shade(body, 0.82)
+    if kind == "chispa":  # estrella de cuatro puntas que late
+        k = s * 0.5 * (1 + (0.07 if busy else 0.04) * math.sin(now * (6 if busy else 2.5)))
+        c = p.c
+        tips = [(0, -1), (1, 0), (0, 1), (-1, 0)]
+        c.move_to(x, y - k)
+        for i in range(4):  # de punta a punta, curvando hacia el centro
+            (x1, y1), (x2, y2) = tips[i], tips[(i + 1) % 4]
+            cx, cy = x + (x1 + x2) * k * 0.3, y + (y1 + y2) * k * 0.3  # 0.3: estrella rellena
+            c.curve_to(cx, cy, cx, cy, x + x2 * k, y + y2 * k)
+        c.close_path()
+        p.rgba(body, a)
+        c.fill()
+        sx, sy, r = x + s * 0.42, y - s * 0.4, s * 0.1  # destello del ánimo
+        p.line(sx - r, sy, sx + r, sy, col, a * glow, lw)
+        p.line(sx, sy - r, sx, sy + r, col, a * glow, lw)
+        eyes(p, x, y + s * 0.02, s * 0.1, e * 0.75, mood, INK, lw, now)
+    elif kind == "burbuja":  # gota que se estira cuando trabaja
+        t = math.sin(now * (6 if busy else 2.2)) * (0.07 if busy else 0.035)
+        w, h = s * 0.46 * (1 + t), s * 0.4 * (1 - t)
+        p.line(x, y - h, x + s * 0.06, y - h - s * 0.14, "#7bd88f" if body == "#93eeb5" else edge, a, lw)
+        p.circle(x + s * 0.1, y - h - s * 0.15, e * 0.75, col, a * glow)  # brote del ánimo
+        p.oval(x - w, y - h, x + w, y + h, body, a)
+        p.oval(x - w * 0.55, y - h * 0.7, x - w * 0.15, y - h * 0.35, WHITE, a * 0.45)  # brillo
+        eyes(p, x, y + s * 0.03, s * 0.14, e, mood, INK, lw, now)
+    elif kind == "gato":
+        for side in (-1, 1):  # orejas, con el interior del color del ánimo
+            ox = x + side * s * 0.27
+            ear = [(ox - s * 0.17, y - s * 0.12), (ox + side * s * 0.06, y - s * 0.5), (ox + s * 0.17, y - s * 0.12)]
+            p.poly(ear, body, a)
+            mx, my = sum(q[0] for q in ear) / 3, sum(q[1] for q in ear) / 3 + s * 0.02
+            p.poly([(mx + (qx - mx) * 0.55, my + (qy - my) * 0.55) for qx, qy in ear], col, a * glow)
+        p.oval(x - s * 0.46, y - s * 0.34, x + s * 0.46, y + s * 0.38, body, a)
+        eyes(p, x, y + s * 0.0, s * 0.17, e, mood, INK, lw, now)
+        p.poly([(x - s * 0.04, y + s * 0.13), (x + s * 0.04, y + s * 0.13), (x, y + s * 0.18)], "#ff8fa3", a)
+        for side in (-1, 1):  # bigotes
+            p.line(x + side * s * 0.2, y + s * 0.16, x + side * s * 0.4, y + s * 0.13, edge, a, lw * 0.6)
+    else:  # robot
+        p.line(x, y - s * 0.38, x, y - s * 0.52, "#dddddd", a, lw)
+        p.circle(x, y - s * 0.55, e * 0.85, col, a * glow)
+        for side in (-1, 1):  # orejas
+            p.oval(x + side * s * 0.5 - e, y - e * 1.4, x + side * s * 0.5 + e, y + e * 1.4, edge, a)
+        p.oval(x - s * 0.46, y - s * 0.4, x + s * 0.46, y + s * 0.4, body, a)
+        p.rrect(x - s * 0.33, y - s * 0.2, x + s * 0.33, y + s * 0.2, s * 0.2, INK, a)
+        eyes(p, x, y, s * 0.15, e, mood, col, lw, now)
+
+
+def robot(p, x, y, s, mood, now, a=1.0):
+    character(p, "robot", x, y, s, mood, now, a)
 
 
 def art_surface(data, px):
@@ -976,6 +1034,7 @@ class Island:
         self.hidden, self.mode = False, "small"
         self.shown, self.quitting = True, False  # mostrar/ocultar a mano (bandeja o Ctrl+Alt+I)
         self.cleared = False  # ya se borró la ventana estando oculta
+        self.keep_open_until = 0  # abierta a la fuerza (menú de ajustes recién usado)
         self.hov = {"play": 0.0, "prev": 0.0, "next": 0.0}  # 0..1: cuánto está "encendido" cada botón
         self.pressed = {}  # botón -> momento del último clic
         self.morph = 0.0  # 0 = ▶, 1 = ⏸ (se transforma de a poco)
@@ -1000,8 +1059,29 @@ class Island:
         self.p = Paint(cairo.Context(self.win.surface))
         self.art = self.icon = (None, None)  # se regeneran a la nueva resolución
 
+    def char(self, p, x, y, size, mood, now, a=1.0):
+        character(p, self.cfg["character"], x, y, size, mood, now, a, self.cfg["body"])
+
+    @property
+    def companion(self):
+        return self.cfg["mode"] == "companion"
+
+    def mood(self, now):
+        """Ánimo del personaje: el de Claude Code, o en modo compañero, según lo que pasa en tu PC."""
+        if not self.companion:
+            return self.claude.mood()
+        if (self.notes.current and now < self.notes.current["until"]) or (self.card and now < self.card["until"]):
+            return "curious"  # llegó algo
+        if now < self.levels.until or self.timer.left():
+            return "focused"
+        if self.media.playing:
+            return "love" if now % 24 < 2.5 else "happy"  # disfruta la música (y a veces se enamora)
+        hour = datetime.now().hour
+        return "sleep" if hour >= 23 or hour < 7 else "happy"
+
     def apply_config(self):
         self.claude.sound = self.cfg["sound"]
+        self.claude.enabled = getattr(self, "shown", True) and not self.companion  # compañero: Claude va a la terminal
         self.notes.enabled = self.cfg["notifications"]
         self.claude.reply_enabled = self.cfg["reply"]
         self.weather.enabled, self.calendar.enabled = self.cfg["weather"], self.cfg["calendar"]
@@ -1042,6 +1122,20 @@ class Island:
         look.add_separator()
         check(look, "translucent", "Translúcida")
         m.add_cascade(label="Apariencia", menu=look)
+        self.char_var, self.body_var = tk.StringVar(value=self.cfg["character"]), tk.StringVar(value=self.cfg["body"])
+        self.mode_var = tk.StringVar(value=self.cfg["mode"])
+        who = tk.Menu(m, tearoff=0, font=font)
+        for label, k in CHARACTERS:
+            who.add_radiobutton(label=label, value=k, variable=self.char_var, command=lambda k=k: self.set("character", k))
+        who.add_separator()
+        for label, col in BODY_COLORS:
+            who.add_radiobutton(label=f"Color {label.lower()}", value=col, variable=self.body_var,
+                                command=lambda col=col: self.set("body", col))
+        m.add_cascade(label="Personaje", menu=who)
+        modes = tk.Menu(m, tearoff=0, font=font)
+        for label, k in [("Claude Code", "claude"), ("Solo compañero", "companion")]:
+            modes.add_radiobutton(label=label, value=k, variable=self.mode_var, command=lambda k=k: self.set("mode", k))
+        m.add_cascade(label="Modo", menu=modes)
         show = tk.Menu(m, tearoff=0, font=font)
         for key, label in [("notifications", "Notificaciones"), ("weather", "Clima"), ("calendar", "Próxima cita"),
                            ("reply", "Responder a Claude desde la isla"), ("sound", "Sonidos")]:
@@ -1070,9 +1164,11 @@ class Island:
         u = ctypes.windll.user32
         before = u.GetForegroundWindow()
         u.SetForegroundWindow(ctypes.c_void_p(self.hwnd))
+        self.keep_open_until = float("inf")  # abierta mientras elijes, aunque el mouse esté en el menú
         try:
             self.menu.tk_popup(e.x_root, e.y_root)  # en Windows espera hasta que el menú se cierra
         finally:
+            self.keep_open_until = time.time() + 6  # y unos segundos más, para ver cómo quedó el cambio
             self.menu.grab_release()
             if before and u.GetForegroundWindow() in (self.hwnd, None):
                 u.SetForegroundWindow(ctypes.c_void_p(before))
@@ -1080,7 +1176,7 @@ class Island:
     def toggle(self):
         """Muestra u oculta la isla (puede llamarse desde otros hilos: solo cambia banderas)."""
         self.shown = not self.shown
-        self.claude.enabled = self.shown
+        self.claude.enabled = self.shown and not self.companion
         if not self.shown:
             for p in list(self.claude.perms):  # los pedidos pendientes vuelven a la terminal
                 p["done"].set()
@@ -1186,12 +1282,13 @@ class Island:
             mode = "note"
         elif card:
             mode = "card"
-        elif hover or replying or now < self.alert_until or now < self.claude.flash_until:
+        elif hover or replying or now < self.keep_open_until or now < self.alert_until or (now < self.claude.flash_until and not self.companion):
             mode = "big"
         else:
             mode = "small"
         self.mode = mode
-        target = {"perm": PERM, "level": LEVEL, "note": NOTIF, "card": NOTIF, "big": BIG, "small": SMALL}[mode]
+        big = BIG_COMPANION if self.companion else BIG
+        target = {"perm": PERM, "level": LEVEL, "note": NOTIF, "card": NOTIF, "big": big, "small": SMALL}[mode]
         # resorte amortiguado: se pasa un poquito y vuelve, como en el iPhone
         self.vw = self.vw * 0.7 + (target[0] - self.w) * 0.1
         self.vh = self.vh * 0.7 + (target[1] - self.h) * 0.1
@@ -1235,7 +1332,7 @@ class Island:
         c.close_path()
 
     def draw(self, w, h, now, mode, target):
-        p, c, mood = self.p, self.p.c, self.claude.mood()
+        p, c, mood = self.p, self.p.c, self.mood(now)
         c.identity_matrix()
         c.set_operator(cairo.OPERATOR_CLEAR)
         c.paint()
@@ -1267,9 +1364,11 @@ class Island:
         elif mode == "card":
             self.draw_card(w, h, now, near)
         elif mode == "big":
-            a = clamp((h - 100) / (BIG[1] - 100)) ** 2
+            a = clamp((h - (40 if self.companion else 100)) / (target[1] - (40 if self.companion else 100))) ** 2
             if now < self.alert_until:
                 p.text(w / 2, h / 2, "⏰  ¡Tiempo!", "symbig", self.accent, a, anchor="center")
+            elif self.companion:
+                self.draw_music(w, now, a, dy=-98)
             else:
                 self.draw_claude(w, now, mood, a)
                 p.line(18, 104, w - 18, 104, "#2a2a2e", a, 1)
@@ -1289,13 +1388,13 @@ class Island:
 
     def draw_small(self, w, h, now, mood, a):
         p, m, left = self.p, self.media, self.timer.left()
-        robot(p, 24, h / 2 + 1, 22, mood, now, a)
+        self.char(p, 24, h / 2 + 1, 22, mood, now, a)
         if m.playing:  # ecualizador animado
             for i in range(3):
                 bh = 3 + 5 * abs(math.sin(now * (5 + i * 1.7) + i))
                 p.line(44 + i * 4.5, h / 2 + 4.5, 44 + i * 4.5, h / 2 + 4.5 - bh, self.accent, a, 2.4)
         _, s, _, _ = self.session()
-        if s and s["since"]:  # Claude trabajando: cuánto lleva
+        if s and s["since"] and not self.companion:  # Claude trabajando: cuánto lleva
             p.text(w / 2, h / 2, mmss(now - s["since"]), "clock", MOODS["focused"], a, anchor="center")
         else:
             p.text(w / 2, h / 2, time.strftime("%H:%M"), "clock", WHITE, a, anchor="center")
@@ -1386,7 +1485,7 @@ class Island:
         x0, y0, size = 14, (h - 40) / 2, 40
         p.rrect(x0, y0, x0 + size, y0 + size, 11, shade(self.accent, 0.25), a)
         if card["kind"] == "update":
-            robot(p, x0 + size / 2, y0 + size / 2 + 3, 26, "happy", now, a)
+            self.char(p, x0 + size / 2, y0 + size / 2 + 3, 26, "happy", now, a)
             ver = self.updater.latest[0] if self.updater.latest else ""
             title, body = f"Nueva versión {ver}", "Isla dinámica se puede actualizar"
             if self.updater.state == "descargando":
@@ -1466,7 +1565,7 @@ class Island:
         p, perms = self.p, self.claude.perms
         if not perms:
             return
-        robot(p, 26, h / 2 + 2, 26, mood, now, a)
+        self.char(p, 26, h / 2 + 2, 26, mood, now, a)
         p.circle(50, h / 2, 3, MOODS["focused"], a)
         more = len(perms) - 1
         right = w - 160 - (22 if more else 0)
@@ -1482,7 +1581,7 @@ class Island:
     def draw_claude(self, w, now, mood, a):
         p = self.p
         sid, s, i, n = self.session()
-        robot(p, 46, 50, 46, mood, now, a)
+        self.char(p, 46, 50, 46, mood, now, a)
         x = 88
         chip = f"‹ {i}/{n} ›" if n > 1 else "Claude Code"
         cw = p.width(chip, "tiny") + 18
@@ -1568,9 +1667,9 @@ class Island:
         x1, x2 = bx + d * 6 * k, bx + d * 8 * k
         p.rrect(min(x1, x2), y - 5.5 * k, max(x1, x2), y + 5.5 * k, 1, WHITE, a)
 
-    def draw_music(self, w, now, a):
+    def draw_music(self, w, now, a, dy=0):
         p, c, m, left = self.p, self.p.c, self.media, self.timer.left()
-        y0, size, x0 = 116, 52, 22
+        y0, size, x0 = 116 + dy, 52, 22
         if m.art and Image and self.art[0] is not m.art:
             try:
                 self.art = (m.art, art_surface(m.art, round(size * self.S * 2)))
@@ -1614,9 +1713,9 @@ class Island:
             pos = min(m.pos + (now - m.stamp if m.playing else 0), m.end)  # avanza suave entre sondeos
             x1, x2, y = x, w - 104, y0 + 48
             p.line(x1, y, x2, y, "#3a3a3e", a, 4)
-            p.line(x1, y, x1 + (x2 - x1) * min(pos / m.end, 1), y, WHITE, a, 4)
+            p.line(x1, y, x1 + (x2 - x1) * clamp(pos / m.end), y, WHITE, a, 4)
             p.text(w - 22, y, f"{mmss(pos)} / {mmss(m.end)}", "tiny", GREY, a, anchor="e")
-        y, cx = BIG[1] - 24, w / 2
+        y, cx = BIG[1] - 24 + dy, w / 2
         self.draw_play(cx, y, now, a)
         self.hit(cx - 18, y - 18, cx + 18, y + 18, lambda: self.media.send("try_toggle_play_pause_async"), "play")
         for cmd, name, d in [("try_skip_previous_async", "prev", -1), ("try_skip_next_async", "next", 1)]:
