@@ -36,13 +36,16 @@ pythonw island.py
 
 ![Personajes](docs/personajes.png)
 
-Robot, Chispa, Burbuja o Gato, en seis colores. Respiran, parpadean y muestran el ánimo. En el modo **Solo compañero** no hay tarjeta de Claude Code: el personaje te acompaña y reacciona a la música, las notificaciones y la hora.
+Robot, Chispa, Burbuja o Gato, en seis colores. Respiran, parpadean, te siguen con la mirada, saltan si les haces clic o cuando Claude termina, y se duermen si dejas la PC un rato. En el modo **Solo compañero** no hay tarjeta de Claude Code: el personaje te acompaña y reacciona a la música, las notificaciones y la hora.
 
 **Además**
 - Música (Spotify, navegador…) con carátula, barra de progreso y botones animados.
 - Notificaciones de Windows (WhatsApp, Discord, correo…) unos segundos; clic para descartar.
 - Barra al cambiar el volumen o el brillo.
 - Avisos al conectar el cargador, auriculares o una memoria USB (clic para abrirla).
+- Captura de pantalla (Win+Shift+S): vista previa con **Guardar** y **Abrir**. Opcional: ver el texto que copias (nunca lo que marcan como privado los gestores de contraseñas).
+- Punto naranja/verde junto a la isla mientras una app usa el micrófono o la cámara, con botón para silenciar el micrófono.
+- Enfoque (pomodoro 25 + 5): clic derecho → Empezar enfoque. Un anillo alrededor del personaje muestra el avance.
 - Clima junto al reloj y tu próxima cita del calendario de Windows, con aviso 10 minutos antes.
 - Reloj, fecha, batería en laptops; CPU y RAM en PCs de escritorio.
 - Temporizador: rueda del mouse = minutos, clic = iniciar/parar.

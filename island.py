@@ -50,13 +50,14 @@ SMALL, BIG, PERM = (230, 34), (480, 214), (520, 44)  # en px lógicos (a 100 % d
 LEVEL, NOTIF = (300, 40), (440, 64)  # barra de volumen/brillo y notificación
 BIG_COMPANION = (480, 118)  # abierta sin tarjeta de Claude Code: música, clima y calendario
 CONFIG = Path.home() / ".isla-dinamica.json"
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 REPO = "alqv10/isla-dinamica"
 DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications": True, "accent": "#3ddc84",
             "translucent": False, "weather": True, "calendar": True, "updates": True, "reply": True,
             "character": "robot", "body": "#f2f2f2",
             "mode": "claude",  # "claude" | "companion"
-            "monitor": "primary"}  # "primary", "mouse" o el nombre de una pantalla, como \\.\DISPLAY2
+            "monitor": "primary",
+            "screenshots": True, "clipboard_text": False, "privacy": True}  # "primary", "mouse" o el nombre de una pantalla, como \\.\DISPLAY2
 ACCENTS = [("Verde", "#3ddc84"), ("Morado", "#a78bfa"), ("Azul", "#4cc2ff"), ("Naranja", "#ff9f43"),
            ("Rosa", "#ff6b9d")]
 REPLY_GRACE = 6  # s que la isla ofrece "Responder" cuando Claude termina (el turno espera ese rato)
@@ -567,6 +568,158 @@ def removable_drives():
     return out
 
 
+# ---------- portapapeles, micrófono/cámara, enfoque ----------
+
+def clipboard_seq():
+    return ctypes.windll.user32.GetClipboardSequenceNumber()
+
+
+def clipboard_private():
+    """Los gestores de contraseñas marcan lo que copian para que nadie lo muestre: se respeta."""
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    if u.IsClipboardFormatAvailable(u.RegisterClipboardFormatW("ExcludeClipboardContentFromMonitorProcessing")):
+        return True
+    fmt = u.RegisterClipboardFormatW("CanIncludeInClipboardHistory")  # vale 0 = "no lo guardes" (contraseñas)
+    if not u.IsClipboardFormatAvailable(fmt) or not u.OpenClipboard(None):
+        return False
+    try:
+        u.GetClipboardData.restype = k.GlobalLock.restype = ctypes.c_void_p
+        k.GlobalLock.argtypes = k.GlobalUnlock.argtypes = [ctypes.c_void_p]
+        h = u.GetClipboardData(fmt)
+        ptr = k.GlobalLock(h) if h else None
+        if not ptr:
+            return False
+        try:
+            return ctypes.c_uint32.from_address(ptr).value == 0
+        finally:
+            k.GlobalUnlock(h)
+    finally:
+        u.CloseClipboard()
+
+
+def clipboard_text():
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    u.GetClipboardData.restype = k.GlobalLock.restype = ctypes.c_void_p
+    k.GlobalLock.argtypes = k.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    if not u.OpenClipboard(None):
+        return ""
+    try:
+        h = u.GetClipboardData(13)  # CF_UNICODETEXT
+        ptr = k.GlobalLock(h) if h else None
+        if not ptr:
+            return ""
+        try:
+            return ctypes.wstring_at(ptr)
+        finally:
+            k.GlobalUnlock(h)
+    finally:
+        u.CloseClipboard()
+
+
+def pictures_dir():
+    """La carpeta Imágenes de verdad (puede estar en OneDrive)."""
+    class GUID(ctypes.Structure):
+        _fields_ = [("a", ctypes.c_uint32), ("b", ctypes.c_uint16), ("c", ctypes.c_uint16), ("d", ctypes.c_ubyte * 8)]
+    folder = GUID(0x33E28130, 0x4E1E, 0x4676, (ctypes.c_ubyte * 8)(0x83, 0x5A, 0x98, 0x39, 0x5C, 0x3B, 0xC3, 0xBB))
+    out = ctypes.c_wchar_p()
+    try:
+        if ctypes.windll.shell32.SHGetKnownFolderPath(ctypes.byref(folder), 0, None, ctypes.byref(out)) == 0:
+            path = Path(out.value)
+            ctypes.windll.ole32.CoTaskMemFree(out)
+            return path
+    except OSError:
+        pass
+    return Path.home() / "Pictures"
+
+
+def in_use():
+    """{"microphone": {"Discord", …}, "webcam": {…}}: apps que lo están usando ahora (Windows lo anota en el
+    registro: LastUsedTimeStop = 0 mientras sigue en uso)."""
+    import winreg
+    base = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore"
+    out = {}
+    for cap in ("microphone", "webcam"):
+        apps = set()
+        for sub in ("NonPackaged", ""):
+            try:
+                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, base + "\\" + cap + ("\\" + sub if sub else ""))
+            except OSError:
+                continue
+            i = 0
+            while True:
+                try:
+                    name = winreg.EnumKey(key, i)
+                except OSError:
+                    break
+                i += 1
+                if name == "NonPackaged":
+                    continue
+                try:
+                    with winreg.OpenKey(key, name) as app:
+                        if winreg.QueryValueEx(app, "LastUsedTimeStop")[0] == 0 and                                 winreg.QueryValueEx(app, "LastUsedTimeStart")[0] > 0:
+                            # "C:#Program Files#Discord#Discord.exe" o "Microsoft.WindowsCamera_8wekyb3d8bbwe"
+                            short = name.split("#")[-1].removesuffix(".exe") if "#" in name else name.split("_")[0].split(".")[-1]
+                            apps.add(short)
+                except OSError:
+                    pass
+        out[cap] = apps
+    return out
+
+
+def mic_mute(toggle=False):
+    """Silencia/activa el micrófono por defecto; devuelve si quedó silenciado (None si no hay)."""
+    try:
+        from pycaw.pycaw import AudioUtilities
+        vol = AudioUtilities.CreateDevice(AudioUtilities.GetMicrophone()).EndpointVolume
+        if toggle:
+            vol.SetMute(not vol.GetMute(), None)
+        return bool(vol.GetMute())
+    except (ImportError, OSError, AttributeError):
+        return None
+
+
+def idle_seconds():
+    """Segundos desde la última tecla o movimiento del mouse."""
+    class LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("size", wintypes.UINT), ("time", wintypes.DWORD)]
+    info = LASTINPUTINFO(ctypes.sizeof(LASTINPUTINFO), 0)
+    ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info))
+    return (ctypes.windll.kernel32.GetTickCount() - info.time) / 1000
+
+
+class Focus:
+    """Pomodoro: 25 min de enfoque y 5 de descanso (15 cada 4 rondas)."""
+    MINUTES = {"work": 25, "rest": 5, "long": 15}
+
+    def __init__(self):
+        self.phase, self.ends, self.round = None, 0.0, 0
+
+    def start(self):
+        self.phase, self.round = "work", 1
+        self.ends = time.time() + self.MINUTES["work"] * 60
+
+    def stop(self):
+        self.phase = None
+
+    def left(self):
+        return max(0.0, self.ends - time.time()) if self.phase else None
+
+    def progress(self):
+        return 1 - self.left() / (self.MINUTES[self.phase] * 60) if self.phase else 0
+
+    def update(self, now):
+        """Pasa de fase cuando se acaba el tiempo; devuelve la fase nueva (o None si no cambió)."""
+        if not self.phase or now < self.ends:
+            return None
+        if self.phase == "work":
+            self.phase = "long" if self.round % 4 == 0 else "rest"
+        else:
+            self.phase, self.round = "work", self.round + 1
+        self.ends = now + self.MINUTES[self.phase] * 60
+        return self.phase
+
+
+PRIVACY = {"microphone": "#ff9f0a", "webcam": "#30d158"}  # naranja = micrófono, verde = cámara (como el iPhone)
 HEADPHONES = ("auricular", "headphone", "headset", "buds", "airpods", "hands-free", "manos libres")
 
 
@@ -986,9 +1139,11 @@ BODY_COLORS = [("Blanco", "#f2f2f2"), ("Coral", "#ff9478"), ("Lila", "#c9b8ff"),
 INK = "#15151b"  # ojos y visor oscuros
 
 
-def eyes(p, x, y, gap, e, mood, col, lw, now):
-    """Par de ojos según el ánimo: ^ ^ contento, corazones, rayas dormido, chicos trabajando, grandes curioso."""
+def eyes(p, x, y, gap, e, mood, col, lw, now, look=(0, 0)):
+    """Par de ojos según el ánimo: ^ ^ contento, corazones, rayas dormido, chicos trabajando, grandes curioso.
+    look = hacia dónde miran (-1..1 en x e y): los ojos se corren un poco hacia el mouse."""
     blink = mood != "sleep" and now % 4.3 < 0.12
+    x, y = x + look[0] * e * 0.5, y + look[1] * e * 0.35
     for ex in (x - gap, x + gap):
         if mood == "sleep" or blink:
             p.line(ex - e * 0.8, y, ex + e * 0.8, y, col, p.alpha, lw)
@@ -1015,13 +1170,14 @@ def eyes(p, x, y, gap, e, mood, col, lw, now):
             p.oval(ex - e * k, y - e * k * 1.3, ex + e * k, y + e * k * 1.3, col, p.alpha)
 
 
-def character(p, kind, x, y, s, mood, now, a=1.0, body="#f2f2f2"):
+def character(p, kind, x, y, s, mood, now, a=1.0, body="#f2f2f2", look=(0, 0), hop=0.0):
     """Personaje de ancho ~s centrado en (x, y): respira, parpadea y los ojos cambian con el ánimo.
-    El color del ánimo va en un detalle propio de cada uno (antena, destello, brote, orejas)."""
+    El color del ánimo va en un detalle propio de cada uno (antena, destello, brote, orejas).
+    look: hacia dónde mira; hop: 0..1, cuánto está saltando."""
     col, e = MOODS[mood], s * 0.11
     p.alpha = a
     busy = mood == "focused"
-    y += math.sin(now * (4.5 if busy else 2.2)) * s * 0.025
+    y += math.sin(now * (4.5 if busy else 2.2)) * s * 0.025 - hop * s * 0.3
     glow = 0.55 + 0.45 * math.sin(now * 7) if busy else 1  # titila mientras trabaja
     lw = max(1.2, s / 18)
     edge = shade(body, 0.82)
@@ -1040,7 +1196,7 @@ def character(p, kind, x, y, s, mood, now, a=1.0, body="#f2f2f2"):
         sx, sy, r = x + s * 0.42, y - s * 0.4, s * 0.1  # destello del ánimo
         p.line(sx - r, sy, sx + r, sy, col, a * glow, lw)
         p.line(sx, sy - r, sx, sy + r, col, a * glow, lw)
-        eyes(p, x, y + s * 0.02, s * 0.1, e * 0.75, mood, INK, lw, now)
+        eyes(p, x, y + s * 0.02, s * 0.1, e * 0.75, mood, INK, lw, now, look)
     elif kind == "burbuja":  # gota que se estira cuando trabaja
         t = math.sin(now * (6 if busy else 2.2)) * (0.07 if busy else 0.035)
         w, h = s * 0.46 * (1 + t), s * 0.4 * (1 - t)
@@ -1048,7 +1204,7 @@ def character(p, kind, x, y, s, mood, now, a=1.0, body="#f2f2f2"):
         p.circle(x + s * 0.1, y - h - s * 0.15, e * 0.75, col, a * glow)  # brote del ánimo
         p.oval(x - w, y - h, x + w, y + h, body, a)
         p.oval(x - w * 0.55, y - h * 0.7, x - w * 0.15, y - h * 0.35, WHITE, a * 0.45)  # brillo
-        eyes(p, x, y + s * 0.03, s * 0.14, e, mood, INK, lw, now)
+        eyes(p, x, y + s * 0.03, s * 0.14, e, mood, INK, lw, now, look)
     elif kind == "gato":
         for side in (-1, 1):  # orejas, con el interior del color del ánimo
             ox = x + side * s * 0.27
@@ -1057,7 +1213,7 @@ def character(p, kind, x, y, s, mood, now, a=1.0, body="#f2f2f2"):
             mx, my = sum(q[0] for q in ear) / 3, sum(q[1] for q in ear) / 3 + s * 0.02
             p.poly([(mx + (qx - mx) * 0.55, my + (qy - my) * 0.55) for qx, qy in ear], col, a * glow)
         p.oval(x - s * 0.46, y - s * 0.34, x + s * 0.46, y + s * 0.38, body, a)
-        eyes(p, x, y + s * 0.0, s * 0.17, e, mood, INK, lw, now)
+        eyes(p, x, y + s * 0.0, s * 0.17, e, mood, INK, lw, now, look)
         p.poly([(x - s * 0.04, y + s * 0.13), (x + s * 0.04, y + s * 0.13), (x, y + s * 0.18)], "#ff8fa3", a)
         for side in (-1, 1):  # bigotes
             p.line(x + side * s * 0.2, y + s * 0.16, x + side * s * 0.4, y + s * 0.13, edge, a, lw * 0.6)
@@ -1068,7 +1224,7 @@ def character(p, kind, x, y, s, mood, now, a=1.0, body="#f2f2f2"):
             p.oval(x + side * s * 0.5 - e, y - e * 1.4, x + side * s * 0.5 + e, y + e * 1.4, edge, a)
         p.oval(x - s * 0.46, y - s * 0.4, x + s * 0.46, y + s * 0.4, body, a)
         p.rrect(x - s * 0.33, y - s * 0.2, x + s * 0.33, y + s * 0.2, s * 0.2, INK, a)
-        eyes(p, x, y, s * 0.15, e, mood, col, lw, now)
+        eyes(p, x, y, s * 0.15, e, mood, col, lw, now, look)
 
 
 def robot(p, x, y, s, mood, now, a=1.0):
@@ -1170,6 +1326,11 @@ class Island:
         self.keep_open_until = 0  # abierta a la fuerza (menú de ajustes recién usado)
         self.drag = None  # (x inicial, y inicial) de un arrastre sobre la música
         self.ac = self.drives = None  # cargador y memorias USB (None = todavía no se miró)
+        self.focus = Focus()
+        self.clip_seq, self.clip_at = clipboard_seq(), 0.0  # lo que ya estaba copiado no se muestra
+        self.inuse = {}  # micrófono/cámara en uso: {"microphone": {"Discord"}, …}
+        self.poke_t = self.celebrate_t = -9.0  # cariño (clic en el personaje) y festejo (Claude terminó)
+        self.last_flash, self.idle, self.ptr = 0.0, 0.0, (0, 0)
         self.drag_dx = self.drag_vis = 0.0  # cuánto se arrastró / cuánto se ve corrido el contenido
         self.hov = {"play": 0.0, "prev": 0.0, "next": 0.0}  # 0..1: cuánto está "encendido" cada botón
         self.pressed = {}  # botón -> momento del último clic
@@ -1216,7 +1377,38 @@ class Island:
             self.resize()
 
     def char(self, p, x, y, size, mood, now, a=1.0):
-        character(p, self.cfg["character"], x, y, size, mood, now, a, self.cfg["body"])
+        """Dibuja el personaje elegido: mira hacia el mouse, salta cuando le haces clic o Claude termina,
+        muestra el anillo del enfoque y "z z" si estás hace rato sin usar la PC."""
+        t = now - max(self.poke_t, self.celebrate_t)
+        hop = math.sin(t * math.pi * 2.5) ** 2 * math.exp(-t * 2.2) if 0 <= t < 1.6 else 0.0
+        if 0 <= now - self.poke_t < 1.2:
+            mood = "love"  # le hiciste cariño
+        sx, sy = self.X + (self.left_edge() + x) * self.S, self.Y + y * self.S  # dónde está, en la pantalla
+        dx, dy = self.ptr[0] - sx, self.ptr[1] - sy
+        dist = math.hypot(dx, dy) or 1
+        k = min(1.0, dist / (160 * self.S))
+        if self.focus.phase:  # anillo de enfoque alrededor
+            r = size * 0.68
+            col = self.accent if self.focus.phase == "work" else MOODS["curious"]
+            p.c.new_sub_path()
+            p.c.arc(x, y, r, 0, 2 * math.pi)
+            p.c.set_line_width(max(1.5, size / 14))
+            p.rgba(shade(col, 0.3), a)
+            p.c.stroke()
+            p.c.new_sub_path()
+            p.c.arc(x, y, r, -math.pi / 2, -math.pi / 2 + 2 * math.pi * self.focus.progress())
+            p.rgba(col, a)
+            p.c.stroke()
+        character(p, self.cfg["character"], x, y, size, mood, now, a, self.cfg["body"],
+                  look=(dx / dist * k, dy / dist * k), hop=hop)
+        if mood == "sleep" and self.idle > 300:  # z z flotando
+            for i in range(2):
+                ph = (now * 0.5 + i * 0.5) % 1
+                p.text(x + size * (0.45 + ph * 0.3), y - size * (0.3 + ph * 0.5), "z", "tiny" if i else "small",
+                       GREY, a * (1 - ph))
+
+    def poke(self):
+        self.poke_t = time.time()
 
     @property
     def companion(self):
@@ -1225,7 +1417,10 @@ class Island:
     def mood(self, now):
         """Ánimo del personaje: el de Claude Code, o en modo compañero, según lo que pasa en tu PC."""
         if not self.companion:
-            return self.claude.mood()
+            mood = self.claude.mood()
+            return "sleep" if mood == "happy" and self.idle > 300 else mood  # hace rato que no estás
+        if self.focus.phase == "work":
+            return "focused"
         if (self.notes.current and now < self.notes.current["until"]) or (self.card and now < self.card["until"]):
             return "curious"  # llegó algo
         if now < self.levels.until or self.timer.left():
@@ -1233,7 +1428,7 @@ class Island:
         if self.media.playing:
             return "love" if now % 24 < 2.5 else "happy"  # disfruta la música (y a veces se enamora)
         hour = datetime.now().hour
-        return "sleep" if hour >= 23 or hour < 7 else "happy"
+        return "sleep" if hour >= 23 or hour < 7 or self.idle > 300 else "happy"
 
     def apply_config(self):
         self.claude.sound = self.cfg["sound"]
@@ -1268,10 +1463,11 @@ class Island:
         font = ("Segoe UI", 10)
         m = self.menu = tk.Menu(self.root, tearoff=0, font=font)
         m.add_command(label="Ajustes…", command=self.open_settings)
+        m.add_command(label="Empezar enfoque (25 + 5 min)", command=self.toggle_focus)
         m.add_separator()
         self.vars = {k: tk.BooleanVar(value=self.cfg[k]) for k in
                      ("sound", "hide_fullscreen", "notifications", "translucent", "weather", "calendar", "updates",
-                      "reply")}
+                      "reply", "screenshots", "clipboard_text", "privacy")}
         self.vars["startup"] = tk.BooleanVar(value=STARTUP.exists())
         self.size_var, self.accent_var = tk.DoubleVar(value=self.cfg["size"]), tk.StringVar(value=self.cfg["accent"])
 
@@ -1305,7 +1501,9 @@ class Island:
         m.add_cascade(label="Modo", menu=modes)
         show = tk.Menu(m, tearoff=0, font=font)
         for key, label in [("notifications", "Notificaciones"), ("weather", "Clima"), ("calendar", "Próxima cita"),
-                           ("reply", "Responder a Claude desde la isla"), ("sound", "Sonidos")]:
+                           ("reply", "Responder a Claude desde la isla"), ("screenshots", "Vista previa de capturas"),
+                           ("clipboard_text", "Texto copiado"), ("privacy", "Micrófono y cámara en uso"),
+                           ("sound", "Sonidos")]:
             check(show, key, label)
         m.add_cascade(label="Mostrar", menu=show)
         check(m, "hide_fullscreen", "Ocultar en pantalla completa")
@@ -1318,7 +1516,10 @@ class Island:
         m.configure(postcommand=self.menu_update_item)
 
     def menu_update_item(self):
-        """Si hay versión nueva, el menú ofrece actualizar (arriba de todo)."""
+        """Antes de abrir el menú: el texto del enfoque y, si hay versión nueva, "Actualizar" arriba de todo."""
+        for i in range(self.menu.index("end") + 1):
+            if self.menu.type(i) == "command" and "enfoque" in self.menu.entrycget(i, "label"):
+                self.menu.entryconfig(i, label="Terminar enfoque" if self.focus.phase else "Empezar enfoque (25 + 5 min)")
         label = f"Actualizar a la versión {self.updater.latest[0]}" if self.updater.latest else None
         if label and self.menu.entrycget(0, "label") != label:
             if self.menu.entrycget(0, "label").startswith("Actualizar"):
@@ -1465,6 +1666,99 @@ class Island:
                 if self.cfg["sound"]:
                     winsound.MessageBeep(winsound.MB_ICONASTERISK)
 
+    def check_clipboard(self):
+        """Algo nuevo en el portapapeles: una captura (vista previa + Guardar/Abrir) o, si lo activas, texto."""
+        seq = clipboard_seq()
+        if seq == self.clip_seq:
+            return
+        self.clip_seq = seq
+        u = ctypes.windll.user32
+        if clipboard_private():
+            return
+        if self.cfg["screenshots"] and u.IsClipboardFormatAvailable(8):  # CF_DIB: una imagen
+            from PIL import ImageGrab
+            try:
+                im = ImageGrab.grabclipboard()
+            except OSError:
+                return
+            if Image and isinstance(im, Image.Image):
+                self.shot_card(im)
+        elif self.cfg["clipboard_text"] and u.IsClipboardFormatAvailable(13):
+            text = " ".join(clipboard_text().split())
+            if text:
+                self.card = {"kind": "clip", "icon": "clip", "title": "Copiado",
+                             "body": text[:200], "until": time.time() + 3}
+
+    def shot_card(self, im):
+        buf = io.BytesIO()
+        im.save(buf, "PNG")
+        data = buf.getvalue()
+        card = {"kind": "shot", "icon": "clip", "title": "Captura copiada",
+                "body": f"{im.width} × {im.height} · pégala con Ctrl+V", "until": time.time() + 7,
+                "thumb": art_surface(data, round(40 * self.S * 2))}
+
+        def save():
+            folder = pictures_dir() / "Capturas"
+            folder.mkdir(parents=True, exist_ok=True)
+            path = folder / f"captura-{datetime.now():%Y%m%d-%H%M%S}.png"
+            path.write_bytes(data)
+            card.update(title="Captura guardada", body=f"Imágenes › Capturas › {path.name}", until=time.time() + 5,
+                        buttons=[("Mostrar", lambda: subprocess.Popen(["explorer", "/select,", str(path)]), True)])
+
+        def open_():
+            import tempfile
+            path = Path(tempfile.gettempdir()) / "isla-captura.png"
+            path.write_bytes(data)
+            os.startfile(path)
+            card["until"] = 0
+        card["buttons"] = [("Abrir", open_, False), ("Guardar", save, True)]
+        self.card = card
+
+    def check_privacy(self):
+        """Una app empezó a usar el micrófono o la cámara: tarjeta (con Silenciar) y un punto junto a la isla."""
+        cur = in_use() if self.cfg["privacy"] else {}
+        for cap, apps in cur.items():
+            for app in sorted(apps - self.inuse.get(cap, set())):
+                mic = cap == "microphone"
+                card = {"kind": "privacy", "icon": "mic" if mic else "cam", "until": time.time() + 6,
+                        "title": f"{app} está usando {'el micrófono' if mic else 'la cámara'}",
+                        "body": "Verás un punto junto a la isla mientras siga"}
+                if mic:
+                    def toggle(card=card):
+                        muted = mic_mute(toggle=True)
+                        card.update(body="Micrófono silenciado" if muted else "Micrófono activado",
+                                    until=time.time() + 4,
+                                    buttons=[("Activar" if muted else "Silenciar", toggle, not muted)])
+                    muted = mic_mute()
+                    card["buttons"] = [("Activar" if muted else "Silenciar", toggle, not muted)]
+                self.card = card
+        self.inuse = cur
+
+    def focus_card(self, phase):
+        minutes = Focus.MINUTES[phase]
+        if phase == "work":
+            title, body = "A concentrarse", f"{minutes} minutos · ronda {self.focus.round}"
+        else:
+            title = "¡Descanso largo!" if phase == "long" else "¡Descanso!"
+            body = f"{minutes} minutos · terminaste la ronda {self.focus.round}"
+        self.card = {"kind": "focus", "icon": "focus", "title": title, "body": body, "until": time.time() + 8,
+                     "buttons": [("Terminar", self.stop_focus, False)]}
+        self.celebrate_t = time.time()
+        if self.cfg["sound"]:
+            winsound.MessageBeep(winsound.MB_ICONASTERISK)
+
+    def toggle_focus(self):
+        if self.focus.phase:
+            self.stop_focus()
+        else:
+            self.focus.start()
+            self.focus_card("work")
+
+    def stop_focus(self):
+        self.focus.stop()
+        if self.card and self.card["kind"] == "focus":
+            self.card["until"] = 0
+
     def device_card(self, icon, title, body, action=None):
         self.card = {"kind": "device", "icon": icon, "title": title, "body": body, "action": action,
                      "until": time.time() + 5}
@@ -1515,16 +1809,31 @@ class Island:
             self.hidden = self.cfg["hide_fullscreen"] and fullscreen()
             self.follow_monitor()
             self.check_devices(now)
+            self.check_privacy()
+            self.idle = idle_seconds()
         left = self.timer.left()
         if left is not None and left <= 0:
             self.timer.ends = None
             self.alert_until = now + 6
             if self.cfg["sound"]:
                 winsound.MessageBeep(winsound.MB_ICONASTERISK)
+        if now - self.clip_at >= 0.5:
+            self.clip_at = now
+            self.check_clipboard()
+        phase = self.focus.update(now)
+        if phase:
+            self.focus_card(phase)
+        if self.claude.flash_until != self.last_flash:  # Claude terminó: festejo
+            self.last_flash = self.claude.flash_until
+            if not self.companion:
+                self.celebrate_t = now
         px, py = root.winfo_pointerxy()
+        self.ptr = (px, py)
         lx, ly = (px - self.X) / S - self.left_edge(), (py - self.Y) / S
         hover = 0 <= lx < self.w and 0 <= ly < self.h
         note = self.notes.current
+        if note and self.card and self.card["kind"] == "shot" and note["app"] in ("Herramienta Recortes", "Snipping Tool"):
+            self.notes.current = note = None  # la captura ya se muestra en la isla: sin aviso repetido
         if note and hover and self.mode == "note":
             note["until"] = max(note["until"], now + 1)  # no se va mientras la lees
         self.check_cards(now)
@@ -1571,6 +1880,7 @@ class Island:
         moving = (abs(self.vw) + abs(self.vh) > 0.05 or abs(target[0] - self.w) + abs(target[1] - self.h) > 0.5
                   or now - max(self.pressed.values(), default=0) < 0.7  # botón rebotando
                   or self.drag or abs(self.drag_vis) > 0.5  # arrastrando la música
+                  or now - max(self.poke_t, self.celebrate_t) < 1.6  # el personaje saltando
                   or (mode == "big" and (under or any(0.01 < v < 0.99 for v in self.hov.values())
                                          or abs(self.media.playing - self.morph) > 0.01
                                          or abs((1.0 if self.media.playing else 0.9) - self.art_k) > 0.002)))
@@ -1639,6 +1949,8 @@ class Island:
         else:
             self.draw_small(w, h, now, mood, clamp(1 - (h - SMALL[1]) / 30) ** 2)
         c.restore()
+        for i, cap in enumerate(c for c in ("microphone", "webcam") if self.inuse.get(c)):
+            p.circle(w + 10 + i * 10, 10, 3.5, PRIVACY[cap], 1)
 
     def sys_info(self):
         """(texto, fuente, color) de batería o, en PCs de escritorio, CPU y RAM."""
@@ -1652,6 +1964,7 @@ class Island:
     def draw_small(self, w, h, now, mood, a):
         p, m, left = self.p, self.media, self.timer.left()
         self.char(p, 24, h / 2 + 1, 22, mood, now, a)
+        self.hit(2, 0, 40, h, self.poke)
         if m.playing:  # ecualizador animado
             for i in range(3):
                 bh = 3 + 5 * abs(math.sin(now * (5 + i * 1.7) + i))
@@ -1662,7 +1975,9 @@ class Island:
         else:
             p.text(w / 2, h / 2, time.strftime("%H:%M"), "clock", WHITE, a, anchor="center")
         mins = self.minutes_to_event()
-        if left:
+        if self.focus.phase:
+            txt, col = mmss(self.focus.left()), self.accent if self.focus.phase == "work" else MOODS["curious"]
+        elif left:
             txt, col = mmss(left), self.accent
         elif mins is not None and mins <= 60:  # cita pronto: cuánto falta
             txt, col = f"en {mins} min" if mins else "ahora", self.accent
@@ -1743,41 +2058,56 @@ class Island:
         self.hit(0, 0, w, h, lambda: n.update(until=0))  # clic = descartar
 
     def draw_card(self, w, h, now, a):
-        """Tarjeta propia: versión nueva (con botón Actualizar) o cita que está por empezar."""
-        p, card = self.p, self.card
+        """Tarjeta propia: actualización, cita, dispositivo, captura, micrófono/cámara o enfoque.
+        Con "buttons" [(texto, acción, principal)] muestra botones; si no, clic = su acción y se cierra."""
+        p, c, card = self.p, self.p.c, self.card
         x0, y0, size = 14, (h - 40) / 2, 40
-        p.rrect(x0, y0, x0 + size, y0 + size, 11, shade(self.accent, 0.25), a)
-        if card["kind"] == "update":
-            self.char(p, x0 + size / 2, y0 + size / 2 + 3, 26, "happy", now, a)
+        kind, buttons = card["kind"], card.get("buttons", [])
+        if kind == "update":
             ver = self.updater.latest[0] if self.updater.latest else ""
-            title, body = f"Nueva versión {ver}", "Isla dinámica se puede actualizar"
-            if self.updater.state == "descargando":
-                body = "Descargando… se reinicia sola al terminar"
-            elif self.updater.state == "error":
-                body = "No se pudo descargar; prueba más tarde"
-        elif card["kind"] == "device":
-            self.draw_device_icon(card["icon"], x0 + size / 2, y0 + size / 2, a)
-            title, body = card["title"], card["body"]
-        else:  # calendario: hojita con argollas
-            cx, cy = x0 + size / 2, y0 + size / 2
-            p.rrect(cx - 11, cy - 9, cx + 11, cy + 12, 3, WHITE, a)
-            p.rrect(cx - 11, cy - 9, cx + 11, cy - 3, 3, self.accent, a)
-            for dx in (-5, 5):
-                p.line(cx + dx, cy - 12, cx + dx, cy - 7, WHITE, a, 2)
+            title = f"Nueva versión {ver}"
+            body = {"descargando": "Descargando… se reinicia sola al terminar",
+                    "error": "No se pudo descargar; prueba más tarde"}.get(self.updater.state,
+                                                                           "Isla dinámica se puede actualizar")
+            if self.updater.state == "":
+                buttons = [("Luego", lambda: card.update(until=0), False), ("Actualizar", self.updater.install, True)]
+        elif kind == "cal":
             mins = max(0, round((card["start"] - datetime.now(timezone.utc)).total_seconds() / 60))
             title = card["title"]
             body = f"Empieza {'ahora' if not mins else f'en {mins} min'} · {card['start'].strftime('%H:%M')}"
-        x = x0 + size + 12
-        right = w - 22
-        if card["kind"] == "update" and self.updater.state == "":
-            for label, act, bg, fg in [("Luego", lambda: card.update(until=0), "#2a2a30", WHITE),
-                                       ("Actualizar", self.updater.install, self.accent, "#000000")]:
-                bw = p.width(label, "btn") + 24
-                p.rrect(right - bw, h / 2 - 13, right, h / 2 + 13, 13, bg, a)
-                p.text(right - bw / 2, h / 2, label, "btn", fg, a, anchor="center")
-                self.hit(right - bw, 0, right, h, act)
-                right -= bw + 8
-        else:  # clic = la acción de la tarjeta (abrir el USB…) o descartarla
+        else:
+            title, body = card["title"], card["body"]
+        if card.get("thumb"):  # captura: miniatura con esquinas redondeadas
+            surf = card["thumb"][0]
+            c.save()
+            p.rrect_path(x0, y0, x0 + size, y0 + size, 11)
+            c.clip()
+            c.translate(x0, y0)
+            c.scale(size / surf.get_width(), size / surf.get_width())
+            c.set_source_surface(surf, 0, 0)
+            c.get_source().set_filter(cairo.FILTER_GOOD)
+            c.paint_with_alpha(clamp(a))
+            c.restore()
+        else:
+            p.rrect(x0, y0, x0 + size, y0 + size, 11, shade(self.accent, 0.25), a)
+            cx, cy = x0 + size / 2, y0 + size / 2
+            if kind == "update":
+                self.char(p, cx, cy + 3, 26, "happy", now, a)
+            elif kind == "cal":  # hojita con argollas
+                p.rrect(cx - 11, cy - 9, cx + 11, cy + 12, 3, WHITE, a)
+                p.rrect(cx - 11, cy - 9, cx + 11, cy - 3, 3, self.accent, a)
+                for dx in (-5, 5):
+                    p.line(cx + dx, cy - 12, cx + dx, cy - 7, WHITE, a, 2)
+            else:
+                self.draw_device_icon(card.get("icon", ""), cx, cy, a)
+        x, right = x0 + size + 12, w - 22
+        for label, act, primary in reversed(buttons):
+            bw = p.width(label, "btn") + 24
+            p.rrect(right - bw, h / 2 - 13, right, h / 2 + 13, 13, self.accent if primary else "#2a2a30", a)
+            p.text(right - bw / 2, h / 2, label, "btn", "#000000" if primary else WHITE, a, anchor="center")
+            self.hit(right - bw, 0, right, h, act)
+            right -= bw + 8
+        if not buttons:  # clic = la acción de la tarjeta (abrir el USB…) y se cierra
             act = card.get("action")
             self.hit(0, 0, w, h, lambda: (act and act(), card.update(until=0)))
         p.text(x, 23, p.fit(title, "title", right - x - 8), "title", WHITE, a)
@@ -1809,6 +2139,31 @@ class Island:
             c.set_line_width(2)
             p.rgba(col, a)
             c.stroke()
+        elif kind == "mic":
+            p.rrect(cx - 4.5, cy - 11, cx + 4.5, cy + 3, 4.5, PRIVACY["microphone"], a)
+            c.new_sub_path()
+            c.arc(cx, cy - 2, 8, 0.15 * math.pi, 0.85 * math.pi)
+            c.set_line_width(2)
+            p.rgba(WHITE, a)
+            c.stroke()
+            p.line(cx, cy + 6, cx, cy + 11, WHITE, a, 2)
+        elif kind == "cam":
+            p.rrect(cx - 11, cy - 7, cx + 4, cy + 7, 3, WHITE, a)
+            p.poly([(cx + 5, cy - 2), (cx + 11, cy - 6), (cx + 11, cy + 6), (cx + 5, cy + 2)], WHITE, a)
+            p.circle(cx - 6, cy - 2, 2, PRIVACY["webcam"], a)
+        elif kind == "focus":  # reloj
+            c.new_sub_path()
+            c.arc(cx, cy, 10, 0, 2 * math.pi)
+            c.set_line_width(2.4)
+            p.rgba(WHITE, a)
+            c.stroke()
+            p.line(cx, cy, cx, cy - 6, col, a, 2.2)
+            p.line(cx, cy, cx + 4, cy + 2, col, a, 2.2)
+        elif kind == "clip":  # hoja copiada
+            p.rrect(cx - 7, cy - 9, cx + 9, cy + 11, 3, shade(WHITE, 0.55), a)
+            p.rrect(cx - 10, cy - 12, cx + 6, cy + 8, 3, WHITE, a)
+            for i in range(3):
+                p.line(cx - 6, cy - 6 + i * 5, cx + 2, cy - 6 + i * 5, col, a, 1.6)
         else:  # usb: pendrive
             p.rrect(cx - 6, cy - 4, cx + 6, cy + 12, 3, WHITE, a)
             p.rrect(cx - 4, cy - 11, cx + 4, cy - 4, 1, col, a)
@@ -2023,7 +2378,11 @@ class Island:
             self.hit(cx + d * 50 - 18, y - 18, cx + d * 50 + 18, y + 18, lambda cmd=cmd: self.media.send(cmd), name)
         txt, font, col = self.sys_info()
         p.text(22, y, txt, font, col, a)
-        label = mmss(left) if left else f"{self.timer.minutes} min"
+        if self.focus.phase:  # el enfoque usa la misma ficha
+            left = self.focus.left()
+            label = ("Enfoque " if self.focus.phase == "work" else "Descanso ") + mmss(left)
+        else:
+            label = mmss(left) if left else f"{self.timer.minutes} min"
         tw = p.width(label, "small") + 38
         p.rrect(w - 22 - tw, y - 13, w - 22, y + 13, 13, shade(self.accent, 0.22) if left else "#1f1f23", a)
         ix, col = w - 22 - tw + 15, self.accent if left else WHITE  # cronómetro dibujado

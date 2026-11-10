@@ -94,6 +94,13 @@ mons = [{"name": "A", "x": 0, "y": 0, "w": 2560, "h": 1440, "scale": 1.0, "prima
 assert island.pick_monitor(mons, "mouse", (3000, 500))["name"] == "B"
 assert island.pick_monitor(mons, "B", (0, 0))["name"] == "B"
 assert island.pick_monitor(mons, "desconectada", (0, 0))["name"] == "A"  # vuelve a la principal
+f = island.Focus()  # pomodoro: 25 de enfoque, 5 de descanso, 15 cada 4 rondas
+f.start()
+phases = []
+for _ in range(8):
+    f.ends = 0
+    phases.append(f.update(1e12))
+assert phases == ["rest", "work", "rest", "work", "rest", "work", "long", "work"] and f.round == 5, phases
 cc.handle({"session_id": "otra", "cwd": "C:/y/blog", "hook_event_name": "SessionStart"})
 assert [sid for sid, _ in cc.ordered()] == ["grace", "otra"]
 cc.handle({"session_id": "otra", "hook_event_name": "SessionEnd"})

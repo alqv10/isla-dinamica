@@ -71,6 +71,9 @@ class Settings:
         self.section("Mostrar")
         for key, label in [("notifications", "Notificaciones de Windows"), ("weather", "Clima"),
                            ("calendar", "Próxima cita del calendario"), ("reply", "Responder a Claude desde la isla"),
+                           ("screenshots", "Vista previa de capturas de pantalla"),
+                           ("clipboard_text", "Mostrar el texto que copias"),
+                           ("privacy", "Avisar cuando se usa el micrófono o la cámara"),
                            ("sound", "Sonidos"), ("translucent", "Isla translúcida"),
                            ("hide_fullscreen", "Ocultar con juegos y videos en pantalla completa"),
                            ("updates", "Buscar actualizaciones")]:
