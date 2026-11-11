@@ -20,6 +20,8 @@ REPLY_GRACE = 6  # s que la isla ofrece "Responder" cuando Claude termina (el tu
 
 
 REPLY_WAIT = 300  # s para escribir la respuesta una vez abierto el cuadro
+QUESTION_WAIT = 120  # s que una pregunta de Claude espera respuesta en la isla antes de volver a la terminal
+EDIT_TOOLS = ("Edit", "MultiEdit", "Write", "NotebookEdit")
 
 
 def first_line(s, n=60):
@@ -68,6 +70,7 @@ class ClaudeCode:
         self.enabled = True  # False con la isla oculta
         self.reply_enabled = True
         self.reply = None  # oferta de "Responder" tras el último Stop (ver wait_reply)
+        self.questions = []  # preguntas de Claude (AskUserQuestion) esperando respuesta en la isla
         self.lock = threading.Lock()
 
     def current(self):
@@ -83,7 +86,7 @@ class ClaudeCode:
         mood, until = self.mood_override
         if time.time() < until:
             return mood
-        if self.perms:
+        if self.perms or self.questions:
             return "curious"
         s, _count = self.current()
         return s["mood"] if s else "sleep"
@@ -144,6 +147,40 @@ class ClaudeCode:
             r["cancel"] = True
             r["done"].set()
 
+    # --- preguntas de Claude (AskUserQuestion) ---
+    # Un hook PreToolUse sincrónico (solo para AskUserQuestion) espera tu respuesta. Si respondes en la isla,
+    # la herramienta se "rechaza" con tu respuesta como motivo: es la forma que tiene un hook de pasarle un
+    # texto a Claude, y Claude sigue con esa respuesta. "En la terminal" o el tiempo agotado: pregunta normal.
+
+    def wait_question(self, sid, inp):
+        qs = inp.get("questions") or []
+        q = qs[0] if len(qs) == 1 and not qs[0].get("multiSelect") else None
+        options = [o.get("label", "") for o in (q or {}).get("options", []) if o.get("label")]
+        if not q or not options or not self.enabled:
+            return b""  # varias preguntas o selección múltiple: mejor en la terminal
+        item = {"sid": sid, "text": first_line(q.get("question"), 200), "options": options[:4],
+                "done": threading.Event(), "answer": None}
+        self.questions.append(item)
+        if self.sound:
+            winsound.MessageBeep(winsound.MB_ICONQUESTION)
+        item["done"].wait(QUESTION_WAIT)
+        self.questions.remove(item)
+        if not item["answer"]:
+            return b""
+        reason = _("Respondí desde la isla dinámica: «{answer}». Sigue con esa respuesta, sin volver a preguntar.",
+                   answer=item["answer"])
+        return json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse", "permissionDecision": "deny",
+                                                  "permissionDecisionReason": reason}}).encode()
+
+    def answer_question(self, answer):
+        """answer = la opción elegida, o None = responder en la terminal."""
+        if self.questions:
+            q = self.questions[0]
+            q["answer"] = answer
+            q["done"].set()
+            if answer:
+                self.mood_override = ("love", time.time() + 2)
+
     def handle(self, ev):
         """Procesa un evento de hook; devuelve el cuerpo de la respuesta (bytes) para el hook."""
         name, sid = ev.get("hook_event_name"), ev.get("session_id", "?")
@@ -158,10 +195,22 @@ class ClaudeCode:
                 del self.sessions[sid]
             elif name == "UserPromptSubmit":
                 s.update(status=_("Pensando…"), detail=[(first_line(ev.get("prompt")), GREY)], mood="focused",
-                         since=time.time(), took=None)
+                         since=time.time(), took=None, files=set())
+            elif name == "PreToolUse" and tool == "TodoWrite":  # lista de tareas: avance y la que está en curso
+                todos = [(t.get("content", ""), t.get("status", ""), t.get("activeForm", "")) for t in inp.get("todos", [])]
+                s["todos"] = todos
+                current = next((t for t in todos if t[1] == "in_progress"), None)
+                s["status"] = current[2] or current[0] if current else _("Organizando tareas")
+                s["detail"] = [(("✓ " if st == "completed" else "▸ " if st == "in_progress" else "· ") + first_line(c),
+                                GREEN if st == "completed" else WHITE if st == "in_progress" else GREY)
+                               for c, st, _a in todos if st != "completed"][:2] + \
+                              [("✓ " + first_line(c), GREEN) for c, st, _a in todos if st == "completed"][-1:]
+                s["mood"] = "focused"
             elif name == "PreToolUse":
                 s["status"], s["detail"] = describe(tool, inp)
                 s["mood"] = "focused"
+                if tool in EDIT_TOOLS and (inp.get("file_path") or inp.get("notebook_path")):
+                    s.setdefault("files", set()).add(inp.get("file_path") or inp.get("notebook_path"))
             elif name == "Notification":
                 s.update(status=first_line(ev.get("message")) or _("Te necesita"), detail=[], mood="curious")
             elif name == "Stop":
@@ -174,6 +223,8 @@ class ClaudeCode:
             winsound.MessageBeep(winsound.MB_OK)
         if name in ("UserPromptSubmit", "SessionEnd"):  # escribiste en la terminal: ya no hace falta
             self.drop_reply(sid)
+        if name == "PreToolUse" and tool == "AskUserQuestion" and ev.get("_sync"):
+            return self.wait_question(sid, inp)
         if name == "Stop" and self.reply_enabled and self.enabled:
             return self.wait_reply(sid)
         if name != "PermissionRequest" or not self.enabled:

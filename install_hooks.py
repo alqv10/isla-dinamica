@@ -9,10 +9,13 @@ from pathlib import Path
 
 SETTINGS = Path.home() / ".claude" / "settings.json"
 HOOK = (Path(__file__).resolve().parent / "claude_hook.py").as_posix()
-# evento -> timeout en s, o None = async. Los de estado van async para no frenar a Claude; el de permisos
-# espera el clic en la isla y Stop espera por si respondes desde la isla (island.REPLY_GRACE/REPLY_WAIT).
-EVENTS = {"SessionStart": None, "UserPromptSubmit": None, "PreToolUse": None, "PostToolUse": None,
-          "Notification": None, "SessionEnd": None, "PermissionRequest": 120, "Stop": 400}
+# (evento, matcher, timeout en s o None = async, argumentos extra). Los de estado van async para no frenar a
+# Claude; el de permisos espera el clic en la isla, Stop espera por si respondes desde la isla
+# (claude.REPLY_GRACE/REPLY_WAIT) y el de AskUserQuestion espera tu respuesta (claude.QUESTION_WAIT).
+EVENTS = [("SessionStart", None, None, []), ("UserPromptSubmit", None, None, []), ("PreToolUse", "*", None, []),
+          ("PreToolUse", "AskUserQuestion", 150, ["--pregunta"]), ("PostToolUse", "*", None, []),
+          ("Notification", None, None, []), ("SessionEnd", None, None, []), ("PermissionRequest", "*", 120, []),
+          ("Stop", None, 400, [])]
 
 
 def hook_command():
@@ -38,11 +41,10 @@ def install(remove=False):
             del hooks[event]
     if not remove:
         command, args = hook_command()
-        for event, timeout in EVENTS.items():
-            h = {"type": "command", "command": command, "args": args}
+        for event, matcher, timeout, extra in EVENTS:
+            h = {"type": "command", "command": command, "args": args + extra}
             h.update({"async": True} if timeout is None else {"timeout": timeout})
-            hooks.setdefault(event, []).append({"matcher": "*", "hooks": [h]} if "Tool" in event or
-                                               event == "PermissionRequest" else {"hooks": [h]})
+            hooks.setdefault(event, []).append({"matcher": matcher, "hooks": [h]} if matcher else {"hooks": [h]})
     if not hooks:
         del settings["hooks"]
     SETTINGS.parent.mkdir(exist_ok=True)

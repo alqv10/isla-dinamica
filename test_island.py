@@ -18,8 +18,8 @@ claude.REPLY_GRACE = 0.3  # que el Stop no espere 6 s en cada prueba
 HOOK = Path(__file__).parent / "claude_hook.py"
 
 
-def run_hook(ev):
-    r = subprocess.run([sys.executable, HOOK], input=json.dumps(ev).encode(), capture_output=True, timeout=20)
+def run_hook(ev, *args):
+    r = subprocess.run([sys.executable, HOOK, *args], input=json.dumps(ev).encode(), capture_output=True, timeout=20)
     assert r.returncode == 0, r.stderr
     return r.stdout
 
@@ -114,6 +114,32 @@ for _ in range(8):
     f.ends = 0
     phases.append(f.update(1e12))
 assert phases == ["rest", "work", "rest", "work", "rest", "work", "long", "work"] and f.round == 5, phases
+# Claude Code en vivo: lista de tareas, archivos cambiados y preguntas respondidas desde la isla
+cc.handle({**base, "hook_event_name": "UserPromptSubmit", "prompt": "x"})
+cc.handle({**base, "hook_event_name": "PreToolUse", "tool_name": "TodoWrite", "tool_input": {"todos": [
+    {"content": "Leer", "status": "completed", "activeForm": "Leyendo"},
+    {"content": "Arreglar", "status": "in_progress", "activeForm": "Arreglando el total"},
+    {"content": "Probar", "status": "pending", "activeForm": "Probando"}]}})
+s = cc.current()[0]
+assert s["status"] == "Arreglando el total" and len(s["todos"]) == 3, s["status"]
+for f in ("a.py", "b.py", "a.py"):
+    cc.handle({**base, "hook_event_name": "PreToolUse", "tool_name": "Edit", "tool_input": {"file_path": f}})
+assert len(cc.current()[0]["files"]) == 2
+question = {**base, "hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion", "tool_input": {"questions": [
+    {"question": "¿Qué base de datos?", "options": [{"label": "SQLite"}, {"label": "Postgres"}], "multiSelect": False}]}}
+assert run_hook(question) == b""  # el hook async (sin --pregunta) no espera
+def answer_q(answer):
+    def go():
+        while not cc.questions:
+            time.sleep(0.02)
+        assert cc.questions[0]["options"] == ["SQLite", "Postgres"]
+        cc.answer_question(answer)
+    threading.Thread(target=go, daemon=True).start()
+answer_q("Postgres")
+out = json.loads(run_hook(question, "--pregunta"))["hookSpecificOutput"]
+assert out["permissionDecision"] == "deny" and "Postgres" in out["permissionDecisionReason"], out
+answer_q(None)  # "En la terminal": la pregunta sigue normal
+assert run_hook(question, "--pregunta") == b"" and not cc.questions
 cc.handle({"session_id": "otra", "cwd": "C:/y/blog", "hook_event_name": "SessionStart"})
 assert [sid for sid, _ in cc.ordered()] == ["grace", "otra"]
 cc.handle({"session_id": "otra", "hook_event_name": "SessionEnd"})

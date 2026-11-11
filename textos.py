@@ -108,6 +108,11 @@ EN = {
     # fondos
     "Fondo": "Background", "Fondo: {name}": "Background: {name}", "Negro": "Black", "Vidrio": "Glass",
     "Aurora": "Aurora", "Carátula": "Album art",
+    # Claude Code en vivo
+    "Organizando tareas": "Planning tasks", "Tareas {done}/{total}": "Tasks {done}/{total}",
+    " · {n} archivo(s)": " · {n} file(s)", "En la terminal": "In the terminal",
+    "Respondí desde la isla dinámica: «{answer}». Sigue con esa respuesta, sin volver a preguntar.":
+        "I answered from the island: \"{answer}\". Continue with that answer without asking again.",
     # menú y bandeja
     "Mostrar / ocultar": "Show / hide", "Ajustes…": "Settings…", "Salir": "Quit", "Ocultar": "Hide",
     "Empezar enfoque (25 + 5 min)": "Start focus (25 + 5 min)", "Terminar enfoque": "Stop focus",

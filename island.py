@@ -899,6 +899,8 @@ class Island:
         replying = self.reply_box is not None or (reply and not reply.get("cancel") and now < reply["until"])
         if self.claude.perms:  # aunque haya hover: si se expandiera, los botones se escaparían del mouse
             mode = "perm"
+        elif self.claude.questions:
+            mode = "question"
         elif self.chat:
             mode = "chat"
         elif now < self.levels.until:
@@ -914,7 +916,7 @@ class Island:
         self.mode = mode
         big = self.big_size()
         card_size = (520, 92) if card and card["kind"] == "tour" else NOTIF  # el tour lleva más texto
-        target = {"perm": PERM, "chat": PERM, "level": LEVEL, "note": NOTIF, "card": card_size, "big": big,
+        target = {"perm": PERM, "question": (600, 92), "chat": PERM, "level": LEVEL, "note": NOTIF, "card": card_size, "big": big,
                   "small": SMALL}[mode]
         # resorte amortiguado: se pasa un poquito y vuelve, como en el iPhone
         self.vw = self.vw * 0.7 + (target[0] - self.w) * 0.1
@@ -988,6 +990,8 @@ class Island:
             self.draw_perm(w, h, now, mood, near)
         elif mode == "chat":
             self.draw_chat(w, h, now, mood, near)
+        elif mode == "question":
+            self.draw_question(w, h, now, mood, near)
         elif mode == "level":
             self.draw_level(w, h, near)
         elif mode == "note":
@@ -1337,6 +1341,29 @@ class Island:
         if before:  # volver a la app en la que estabas
             ctypes.windll.user32.SetForegroundWindow(ctypes.c_void_p(before))
 
+    def draw_question(self, w, h, now, mood, a):
+        """Pregunta de Claude: el texto arriba y un botón por opción (más "En la terminal")."""
+        p, qs = self.p, self.claude.questions
+        if not qs:
+            return
+        q = qs[0]
+        self.char(p, 26, 28, 26, mood, now, a)
+        p.text(52, 24, p.fit(q["text"], "title", w - 72), "title", WHITE, a)
+        x, y = 52, 62
+        for label in q["options"]:
+            text = p.fit(label, "btn", 150)
+            bw = p.width(text, "btn") + 26
+            if x + bw > w - 130:
+                break
+            p.rrect(x, y - 14, x + bw, y + 14, 14, self.accent, a)
+            p.text(x + bw / 2, y, text, "btn", "#000000", a, anchor="center")
+            self.hit(x, y - 16, x + bw, y + 16, lambda label=label: self.claude.answer_question(label))
+            x += bw + 8
+        tw = p.width(_("En la terminal"), "btn") + 26
+        p.rrect(w - 18 - tw, y - 14, w - 18, y + 14, 14, "#2a2a30", a)
+        p.text(w - 18 - tw / 2, y, _("En la terminal"), "btn", WHITE, a, anchor="center")
+        self.hit(w - 18 - tw, y - 16, w - 18, y + 16, lambda: self.claude.answer_question(None))
+
     def draw_chat(self, w, h, now, mood, a):
         """Cabecera del chat: el personaje, qué está pasando y los botones Nueva / ×."""
         p = self.p
@@ -1429,10 +1456,19 @@ class Island:
         sid, s, i, n = self.session()
         self.char(p, 46, 50, 46, mood, now, a)
         x = 88
-        chip = f"‹ {i}/{n} ›" if n > 1 else "Claude Code"
+        todos = s.get("todos") if s else None
+        done = sum(1 for t in todos if t[1] == "completed") if todos else 0
+        chip = f"‹ {i}/{n} ›" if n > 1 else (_("Tareas {done}/{total}", done=done, total=len(todos)) if todos
+                                             else "Claude Code")
         cw = p.width(chip, "tiny") + 18
         p.rrect(w - 22 - cw, 11, w - 22, 29, 9, "#2a2a30" if n > 1 else "#1f1f23", a)
-        p.text(w - 22 - cw / 2, 20, chip, "tiny", WHITE if n > 1 else GREY, a, anchor="center")
+        if todos and n == 1:  # el avance de la lista de tareas rellena la ficha
+            p.c.save()
+            p.c.rectangle(w - 22 - cw, 11, cw * done / len(todos), 18)
+            p.c.clip()
+            p.rrect(w - 22 - cw, 11, w - 22, 29, 9, shade(self.accent, 0.45), a)
+            p.c.restore()
+        p.text(w - 22 - cw / 2, 20, chip, "tiny", WHITE if n > 1 or todos else GREY, a, anchor="center")
         if n > 1:
             self.hit(w - 26 - cw, 6, w - 18, 34, self.next_session)
         p.circle(x + 3, 20, 3, MOODS[mood], a)
@@ -1450,6 +1486,8 @@ class Island:
             status += f"  ·  {mmss(now - s['since'])}"
         elif s and s["took"]:
             status = _("{status} en {time}", status=status, time=mmss(s["took"]))
+            if s.get("files"):
+                status += _(" · {n} archivo(s)", n=len(s["files"]))
         r = self.claude.reply
         if r and s and r["sid"] == sid and self.reply_box is None and not r.get("cancel") and now < r["until"]:
             bw, bx = 86, w - 22 - 86  # botón "Responder": el color se va vaciando con el tiempo que queda

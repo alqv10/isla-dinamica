@@ -82,6 +82,12 @@ m.art = None
 check("permiso", "perm", island.PERM,
       lambda: cc.perms.append({"sid": "a", "text": "git push", "done": None, "allow": None}))
 cc.perms.clear()
+check("pregunta", "question", (600, 92), lambda: cc.questions.append(
+    {"sid": "a", "text": "¿Qué base de datos usamos?", "options": ["SQLite", "Postgres", "MySQL"], "done": None}))
+cc.questions.clear()
+cc.sessions["a"]["todos"] = [("Leer", "completed", ""), ("Arreglar", "in_progress", ""), ("Probar", "pending", "")]
+check("abierta-tareas", "big", big)
+cc.sessions["a"].pop("todos")
 check("volumen", "level", island.LEVEL, lambda: isl.levels.show("vol", 40))
 check("brillo", "level", island.LEVEL, lambda: isl.levels.show("sun", 70))
 check("notificacion", "note", island.NOTIF, lambda: setattr(isl.notes, "current", {

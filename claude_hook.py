@@ -9,7 +9,8 @@ PORT = int(os.environ.get("ISLA_PORT", 47823))  # el mismo en island.py
 
 data = sys.stdin.buffer.read()
 try:  # el proceso padre lleva a la ventana de la terminal (para traerla al frente desde la isla)
-    data = json.dumps({**json.loads(data), "_pid": os.getppid()}).encode()
+    extra = {"_sync": True} if "--pregunta" in sys.argv else {}  # el hook que espera tu respuesta a Claude
+    data = json.dumps({**json.loads(data), "_pid": os.getppid(), **extra}).encode()
 except ValueError:
     pass
 try:
