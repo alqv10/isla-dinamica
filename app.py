@@ -51,7 +51,9 @@ def uninstall():
     folder = Path(sys.executable).parent
     subprocess.Popen(f'cmd /c ping -n 3 127.0.0.1 >nul & rmdir /s /q "{folder}"',
                      creationflags=subprocess.CREATE_NO_WINDOW)
-    ctypes.windll.user32.MessageBoxW(None, "La isla dinámica se desinstaló.", NAME, 0x40)
+    import textos
+    textos.set_language("auto")
+    ctypes.windll.user32.MessageBoxW(None, textos._("La isla dinámica se desinstaló."), NAME, 0x40)
 
 
 if __name__ == "__main__":

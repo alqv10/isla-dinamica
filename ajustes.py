@@ -7,6 +7,8 @@ import cairo
 from PIL import Image, ImageTk
 
 import island
+import textos
+from textos import _
 
 BG, CARD, LINE, FG, DIM = "#111114", "#1c1c1f", "#2c2c31", "#ffffff", "#9a9a9f"
 
@@ -26,7 +28,7 @@ class Settings:
         self.isl, self.cfg = isl, isl.cfg
         self.k = k = isl.root.winfo_fpixels("1i") / 96  # escala de la pantalla para los px de los dibujos
         t = self.top = tk.Toplevel(isl.root, bg=BG)
-        t.title("Ajustes · Isla dinámica")
+        t.title(_("Ajustes · Isla dinámica"))
         t.resizable(False, False)
         t.protocol("WM_DELETE_WINDOW", self.close)
         self.images, self.refreshers = [], []
@@ -41,8 +43,8 @@ class Settings:
         except (AttributeError, OSError):
             pass
 
-        tk.Label(t, text="Ajustes", font=("Segoe UI", 18, "bold"), bg=BG, fg=FG).pack(anchor="w", pady=(round(16 * k), 0), **pad)
-        tk.Label(t, text="Los cambios se ven al instante en la isla.", font=("Segoe UI", 9), bg=BG, fg=DIM).pack(anchor="w", **pad)
+        tk.Label(t, text=_("Ajustes"), font=("Segoe UI", 18, "bold"), bg=BG, fg=FG).pack(anchor="w", pady=(round(16 * k), 0), **pad)
+        tk.Label(t, text=_("Los cambios se ven al instante en la isla."), font=("Segoe UI", 9), bg=BG, fg=DIM).pack(anchor="w", **pad)
         cols = tk.Frame(t, bg=BG)  # dos columnas: cómo se ve (izquierda) y qué hace (derecha)
         cols.pack(fill="x")
         left, right = tk.Frame(cols, bg=BG), tk.Frame(cols, bg=BG)
@@ -51,7 +53,7 @@ class Settings:
         right.pack(side="left", anchor="n")
         self.col = left
 
-        self.section("Personaje")
+        self.section(_("Personaje"))
         row = self.row()
         self.tiles = {}
         for label, kind in island.CHARACTERS:
@@ -59,29 +61,30 @@ class Settings:
             box.pack(side="left", padx=(0, round(10 * k)))
             tile = tk.Label(box, bg=CARD, bd=0, highlightthickness=round(2 * k), cursor="hand2")
             tile.pack()
-            tk.Label(box, text=label, font=("Segoe UI", 9), bg=BG, fg=DIM).pack(pady=(round(4 * k), 0))
+            tk.Label(box, text=_(label), font=("Segoe UI", 9), bg=BG, fg=DIM).pack(pady=(round(4 * k), 0))
             tile.bind("<Button-1>", lambda e, kind=kind: self.change("character", kind))
             self.tiles[kind] = tile
         self.refreshers.append(self.refresh_tiles)
-        self.swatches("Color del personaje", "body", island.BODY_COLORS)
+        self.swatches(_("Color del personaje"), "body", island.BODY_COLORS)
 
-        self.section("Isla")
-        self.swatches("Color de acento", "accent", island.ACCENTS)
-        self.segmented("Modo", "mode", [("Claude Code", "claude"), ("Solo compañero", "companion")])
-        self.segmented("Tamaño", "size", [("Normal", 1.0), ("Grande", 1.2), ("Muy grande", 1.4)])
+        self.section(_("Isla"))
+        self.swatches(_("Color de acento"), "accent", island.ACCENTS)
+        self.segmented(_("Modo"), "mode", [("Claude Code", "claude"), (_("Solo compañero"), "companion")])
+        self.segmented(_("Tamaño"), "size", [(_("Normal"), 1.0), (_("Grande"), 1.2), (_("Muy grande"), 1.4)])
         mons = island.monitors()
-        screens = [("Principal", "primary"), ("La del mouse", "mouse")]
+        screens = [(_("Principal"), "primary"), (_("La del mouse"), "mouse")]
         if len(mons) > 1:
-            screens += [(f"Pantalla {i + 1}", m["name"]) for i, m in enumerate(mons)]
-        self.segmented("Pantalla", "monitor", screens)
+            screens += [(_("Pantalla {n}", n=i + 1), m["name"]) for i, m in enumerate(mons)]
+        self.segmented(_("Pantalla"), "monitor", screens)
+        self.segmented(_("Idioma"), "language", [(_(label), code) for label, code in textos.LANGUAGES])
 
-        self.section("Isla abierta")
+        self.section(_("Isla abierta"))
         self.widget_box = tk.Frame(self.col, bg=BG)
         self.widget_box.pack(fill="x", **pad)
         self.refreshers.append(self.build_widgets)
 
         self.col = right
-        self.section("Mostrar")
+        self.section(_("Mostrar"))
         for key, label in [("notifications", "Notificaciones de Windows"), ("weather", "Clima"),
                            ("calendar", "Próxima cita del calendario"), ("reply", "Responder a Claude desde la isla"),
                            ("screenshots", "Vista previa de capturas de pantalla"),
@@ -90,29 +93,29 @@ class Settings:
                            ("sound", "Sonidos"), ("translucent", "Isla translúcida"),
                            ("hide_fullscreen", "Ocultar con juegos y videos en pantalla completa"),
                            ("updates", "Buscar actualizaciones")]:
-            self.switch(label, lambda key=key: self.cfg[key], lambda v, key=key: self.change(key, v))
-        self.switch("Iniciar con Windows", lambda: island.STARTUP.exists(), self.set_startup)
+            self.switch(_(label), lambda key=key: self.cfg[key], lambda v, key=key: self.change(key, v))
+        self.switch(_("Iniciar con Windows"), lambda: island.STARTUP.exists(), self.set_startup)
 
-        self.section("Atajos de teclado")
+        self.section(_("Atajos de teclado"))
         self.capturing = None  # acción cuyo atajo se está grabando
         self.hotkey_labels = {}
         for action, label in island.HOTKEY_ACTIONS:
             r = self.row()
-            tk.Label(r, text=label, font=("Segoe UI", 10), bg=BG, fg=FG).pack(side="left")
+            tk.Label(r, text=_(label), font=("Segoe UI", 10), bg=BG, fg=FG).pack(side="left")
             key = tk.Label(r, font=("Segoe UI", 9), bg=CARD, padx=round(10 * k), pady=round(3 * k), cursor="hand2")
             key.pack(side="right")
             key.bind("<Button-1>", lambda e, action=action: self.capture(action))
             self.hotkey_labels[action] = key
-        self.hotkey_note = tk.Label(self.col, text="Clic en un atajo y presiona la combinación (Esc cancela, "
-                                    "Retroceso lo borra)", font=("Segoe UI", 8), bg=BG, fg=DIM)
+        self.hotkey_note = tk.Label(self.col, text=_("Clic en un atajo y presiona la combinación (Esc cancela, "
+                                                      "Retroceso lo borra)"), font=("Segoe UI", 8), bg=BG, fg=DIM)
         self.hotkey_note.pack(anchor="w", padx=round(22 * k))
         self.refreshers.append(self.refresh_hotkeys)
         t.bind("<KeyPress>", self.key_pressed)
 
         foot = tk.Frame(t, bg=BG)
         foot.pack(fill="x", pady=(round(14 * k), round(16 * k)), **pad)
-        tk.Label(foot, text=f"Versión {island.VERSION} · código abierto", font=("Segoe UI", 8), bg=BG, fg=DIM).pack(side="left")
-        done = tk.Label(foot, text="Listo", font=("Segoe UI", 10, "bold"), bg=isl.accent, fg="#000000",
+        tk.Label(foot, text=_("Versión {version} · código abierto", version=island.VERSION), font=("Segoe UI", 8), bg=BG, fg=DIM).pack(side="left")
+        done = tk.Label(foot, text=_("Listo"), font=("Segoe UI", 10, "bold"), bg=isl.accent, fg="#000000",
                         padx=round(18 * k), pady=round(5 * k), cursor="hand2")
         done.pack(side="right")
         done.bind("<Button-1>", lambda e: self.close())
@@ -204,7 +207,7 @@ class Settings:
             r = tk.Frame(box, bg=CARD)
             r.pack(fill="x", pady=round(2 * k))
             active = b in on
-            label = island.WIDGETS[b][0] + ("  (no se ve en modo compañero)" if b == "claude" and self.cfg["mode"] == "companion" else "")
+            label = _(island.WIDGETS[b][0]) + (_("  (no se ve en modo compañero)") if b == "claude" and self.cfg["mode"] == "companion" else "")
             tk.Label(r, text=label, font=("Segoe UI", 10), bg=CARD, fg=FG if active else DIM).pack(
                 side="left", padx=round(10 * k), pady=round(6 * k))
             w, h = round(34 * k), round(20 * k)
@@ -236,9 +239,9 @@ class Settings:
         for action, key in self.hotkey_labels.items():
             text = self.cfg["hotkeys"].get(action, "")
             if action == self.capturing:
-                key.config(text="Presiona las teclas…", fg="#000000", bg=self.isl.accent)
+                key.config(text=_("Presiona las teclas…"), fg="#000000", bg=self.isl.accent)
             else:
-                key.config(text=text or "Sin asignar", fg=FG if text else DIM, bg=CARD)
+                key.config(text=text or _("Sin asignar"), fg=FG if text else DIM, bg=CARD)
 
     def capture(self, action):
         self.capturing = action
@@ -263,7 +266,7 @@ class Settings:
             if key in island.KEYS and any(m in mods for m in ("Ctrl", "Alt")):
                 self.capturing = None
                 ok = self.isl.set_hotkey(action, "+".join(mods + [key]))
-                self.hotkey_note.config(text="Listo." if ok else "Esa combinación ya la usa otra app: elige otra.",
+                self.hotkey_note.config(text=_("Listo.") if ok else _("Esa combinación ya la usa otra app: elige otra."),
                                         fg=DIM if ok else "#ff6b6b")
             else:
                 return  # solo un modificador, o una tecla sin Ctrl/Alt: seguir esperando

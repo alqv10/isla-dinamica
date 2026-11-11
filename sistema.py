@@ -4,6 +4,8 @@ import os
 from ctypes import wintypes
 from pathlib import Path
 
+from textos import _
+
 
 class PowerStatus(ctypes.Structure):
     _fields_ = [("ac", ctypes.c_ubyte), ("flag", ctypes.c_ubyte), ("percent", ctypes.c_ubyte),
@@ -77,7 +79,7 @@ def app_windows():
     u, windows = ctypes.windll.user32, {}
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-    def each(hwnd, _):
+    def each(hwnd, _lparam):
         if u.IsWindowVisible(hwnd) and u.GetWindowTextLengthW(hwnd) and not u.GetWindow(hwnd, 4):  # sin dueño
             owner = wintypes.DWORD()
             u.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
@@ -122,7 +124,7 @@ def focus_app(app_id):
     if not app_id:
         return False
     name = app_id.lower() if app_id.lower().endswith(".exe") else app_id.split("!")[0].lower() + ".exe"
-    (_, exe), windows = processes(), app_windows()
+    (_parents, exe), windows = processes(), app_windows()
     hwnd = next((h for pid, h in windows.items() if exe.get(pid) == name), None)
     if hwnd:
         bring_to_front(hwnd)
@@ -144,7 +146,7 @@ def monitors():
     u, out = ctypes.windll.user32, []
 
     @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HMONITOR, wintypes.HDC, ctypes.POINTER(wintypes.RECT), wintypes.LPARAM)
-    def each(h, _hdc, _rect, _):
+    def each(h, _hdc, _rect, _lparam):
         mi = MONITORINFOEX()
         mi.size = ctypes.sizeof(mi)
         u.GetMonitorInfoW(h, ctypes.byref(mi))
@@ -188,7 +190,7 @@ def removable_drives():
         if mask >> i & 1 and k.GetDriveTypeW(root) == 2:  # DRIVE_REMOVABLE
             label = ctypes.create_unicode_buffer(261)
             if k.GetVolumeInformationW(root, label, 261, None, None, None, None, 0):  # 0 = lector sin tarjeta
-                out[chr(65 + i)] = label.value or "Memoria USB"
+                out[chr(65 + i)] = label.value or _("Memoria USB")
     return out
 
 

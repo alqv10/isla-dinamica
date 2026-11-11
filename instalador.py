@@ -10,6 +10,11 @@ import tkinter as tk
 import zipfile
 from pathlib import Path
 
+import textos
+from textos import _
+
+textos.set_language("auto")  # el instalador habla el idioma de Windows
+
 DEST = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "Programs" / "IslaDinamica"
 BUNDLE = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "IslaDinamica.zip"
 BG, FG, GREY, GREEN = "#111114", "#ffffff", "#9a9a9f", "#3ddc84"
@@ -24,7 +29,7 @@ def island_running():
 def close_island():
     """Cierra la isla (y hooks en curso) y espera a que los procesos terminen de verdad: taskkill vuelve
     antes, y mientras tanto Windows no deja reemplazar el .exe."""
-    for _ in range(30):
+    for _attempt in range(30):
         subprocess.run(["taskkill", "/f", "/im", "IslaDinamica.exe"], capture_output=True,
                        creationflags=subprocess.CREATE_NO_WINDOW)
         if not island_running():
@@ -48,12 +53,12 @@ def extract():
 
 
 def run_install(set_status, claude):
-    set_status("Cerrando la isla si estaba abierta…")
+    set_status(_("Cerrando la isla si estaba abierta…"))
     close_island()
-    set_status("Copiando archivos…")
+    set_status(_("Copiando archivos…"))
     extract()
     exe = DEST / "IslaDinamica.exe"
-    set_status("Configurando…")
+    set_status(_("Configurando…"))
     args = [str(exe), "--install"] + ([] if claude else ["--no-claude"])
     r = subprocess.run(args, capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
     if r.returncode:
@@ -81,22 +86,23 @@ def main():
                 subprocess.Popen([str(exe)], cwd=DEST, creationflags=subprocess.DETACHED_PROCESS)
         return
     root = tk.Tk()
-    root.title("Instalar Isla dinámica")
+    root.title(_("Instalar Isla dinámica"))
     root.configure(bg=BG, padx=28, pady=22)
     root.resizable(False, False)
     tk.Label(root, text="Isla dinámica", font=("Segoe UI", 18, "bold"), bg=BG, fg=FG).pack(anchor="w")
-    tk.Label(root, text="Una píldora arriba de la pantalla con Claude Code, música,\nnotificaciones, "
-             "volumen, brillo y temporizador.", font=("Segoe UI", 10), bg=BG, fg=GREY,
+    tk.Label(root, text=_("Una píldora arriba de la pantalla con Claude Code, música,\nnotificaciones, "
+                          "volumen, brillo y temporizador."), font=("Segoe UI", 10), bg=BG, fg=GREY,
              justify="left").pack(anchor="w", pady=(4, 14))
     claude = tk.BooleanVar(value=True)
-    tk.Checkbutton(root, text="Conectar con Claude Code (permisos y estado en la isla)", variable=claude,
+    tk.Checkbutton(root, text=_("Conectar con Claude Code (permisos y estado en la isla)"), variable=claude,
                    font=("Segoe UI", 10), bg=BG, fg=FG, selectcolor=BG, activebackground=BG,
                    activeforeground=FG).pack(anchor="w")
-    tk.Label(root, text=f"Se instala en {DEST}\nArranca sola con Windows (se puede apagar con clic derecho).",
+    tk.Label(root, text=_("Se instala en {dest}\nArranca sola con Windows (se puede apagar con clic derecho).",
+                          dest=DEST),
              font=("Segoe UI", 9), bg=BG, fg=GREY, justify="left").pack(anchor="w", pady=(10, 16))
     status = tk.Label(root, text="", font=("Segoe UI", 10), bg=BG, fg=GREY)
     status.pack(anchor="w")
-    btn = tk.Button(root, text="Instalar", font=("Segoe UI", 11, "bold"), bg=GREEN, fg="#000000", bd=0,
+    btn = tk.Button(root, text=_("Instalar"), font=("Segoe UI", 11, "bold"), bg=GREEN, fg="#000000", bd=0,
                     padx=26, pady=6, activebackground="#2fbf70", cursor="hand2")
     btn.pack(anchor="e", pady=(10, 0))
 
@@ -107,11 +113,11 @@ def main():
         try:
             run_install(set_status, claude.get())
         except (OSError, RuntimeError, zipfile.BadZipFile) as e:
-            set_status(f"No se pudo instalar: {e}", "#ff5555")
-            root.after(0, lambda: btn.config(state="normal", text="Reintentar"))
+            set_status(_("No se pudo instalar: {error}", error=e), "#ff5555")
+            root.after(0, lambda: btn.config(state="normal", text=_("Reintentar")))
             return
-        set_status("¡Listo! La isla ya está arriba de tu pantalla.", GREEN)
-        root.after(0, lambda: btn.config(state="normal", text="Cerrar", command=root.destroy))
+        set_status(_("¡Listo! La isla ya está arriba de tu pantalla."), GREEN)
+        root.after(0, lambda: btn.config(state="normal", text=_("Cerrar"), command=root.destroy))
 
     def start():
         btn.config(state="disabled")

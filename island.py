@@ -29,6 +29,8 @@ from sistema import *  # noqa: F401,F403
 from dibujo import *  # noqa: F401,F403
 from claude import *  # noqa: F401,F403
 from servicios import *  # noqa: F401,F403
+import textos
+from textos import _, long_date, short_date
 
 
 CONFIG = Path.home() / ".isla-dinamica.json"
@@ -42,7 +44,8 @@ DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications"
             "screenshots": True, "clipboard_text": False, "privacy": True,
             "widgets": ["claude", "music"],
             # atajos: en teclados en español Ctrl+Alt = AltGr, por eso solo uno viene puesto
-            "hotkeys": {"toggle": "Ctrl+Alt+I", "focus": "", "play": "", "settings": ""}}  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
+            "hotkeys": {"toggle": "Ctrl+Alt+I", "focus": "", "play": "", "settings": ""},
+            "language": "auto"}  # "auto" (el de Windows), "es" o "en"  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
 
 
 STARTUP = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/Isla dinamica.lnk"
@@ -82,9 +85,9 @@ def start_tray(toggle, quit_, settings):
         import pystray
     except ImportError:
         return None
-    menu = pystray.Menu(pystray.MenuItem("Mostrar / ocultar", lambda: toggle(), default=True),
-                        pystray.MenuItem("Ajustes…", lambda: settings()),
-                        pystray.MenuItem("Salir", lambda: quit_()))
+    menu = pystray.Menu(pystray.MenuItem(lambda item: _("Mostrar / ocultar"), lambda: toggle(), default=True),
+                        pystray.MenuItem(lambda item: _("Ajustes…"), lambda: settings()),
+                        pystray.MenuItem(lambda item: _("Salir"), lambda: quit_()))
     tray = pystray.Icon("isla-dinamica", robot_image().resize((64, 64), Image.LANCZOS), "Isla dinámica", menu)
     tray.run_detached()
     return tray
@@ -153,6 +156,7 @@ class Island:
         u = ctypes.windll.user32
         u.GetForegroundWindow.restype = ctypes.c_void_p
         before = u.GetForegroundWindow()  # al crearse, la ventana de Tk se lleva el foco: se lo devolvemos
+        textos.set_language(self.cfg["language"])
         self.root = root = tk.Tk()
         import registro
         registro.install(root, VERSION)
@@ -315,6 +319,13 @@ class Island:
             self.resize()
         if key == "monitor":
             self.follow_monitor()
+        if key == "language":  # menús, bandeja y ajustes en el idioma nuevo
+            textos.set_language(value)
+            self.build_menu()
+            if self.tray:
+                self.tray.update_menu()
+            if self.settings:
+                self.root.after(0, self.reopen_settings)
         # el menú rápido muestra lo mismo que la ventana de ajustes
         var = {"size": "size_var", "accent": "accent_var", "character": "char_var", "body": "body_var",
                "mode": "mode_var"}.get(key)
@@ -326,8 +337,9 @@ class Island:
     def build_menu(self):
         font = ("Segoe UI", 10)
         m = self.menu = tk.Menu(self.root, tearoff=0, font=font)
-        m.add_command(label="Ajustes…", command=self.open_settings)
-        m.add_command(label="Empezar enfoque (25 + 5 min)", command=self.toggle_focus)
+        m.add_command(label=_("Ajustes…"), command=self.open_settings)
+        m.add_command(label=_("Empezar enfoque (25 + 5 min)"), command=self.toggle_focus)
+        self.focus_item = m.index("end")
         m.add_separator()
         self.vars = {k: tk.BooleanVar(value=self.cfg[k]) for k in
                      ("sound", "hide_fullscreen", "notifications", "translucent", "weather", "calendar", "updates",
@@ -341,57 +353,59 @@ class Island:
 
         look = tk.Menu(m, tearoff=0, font=font)
         for label, k in [("Tamaño normal", 1.0), ("Tamaño grande", 1.2), ("Tamaño muy grande", 1.4)]:
-            look.add_radiobutton(label=label, value=k, variable=self.size_var, command=lambda k=k: self.set("size", k))
+            look.add_radiobutton(label=_(label), value=k, variable=self.size_var, command=lambda k=k: self.set("size", k))
         look.add_separator()
         for label, col in ACCENTS:
-            look.add_radiobutton(label=f"Color {label.lower()}", value=col, variable=self.accent_var,
+            look.add_radiobutton(label=_("Color {name}", name=_(label).lower()), value=col, variable=self.accent_var,
                                  command=lambda col=col: self.set("accent", col))
         look.add_separator()
-        check(look, "translucent", "Translúcida")
-        m.add_cascade(label="Apariencia", menu=look)
+        check(look, "translucent", _("Translúcida"))
+        m.add_cascade(label=_("Apariencia"), menu=look)
         self.char_var, self.body_var = tk.StringVar(value=self.cfg["character"]), tk.StringVar(value=self.cfg["body"])
         self.mode_var = tk.StringVar(value=self.cfg["mode"])
         who = tk.Menu(m, tearoff=0, font=font)
         for label, k in CHARACTERS:
-            who.add_radiobutton(label=label, value=k, variable=self.char_var, command=lambda k=k: self.set("character", k))
+            who.add_radiobutton(label=_(label), value=k, variable=self.char_var, command=lambda k=k: self.set("character", k))
         who.add_separator()
         for label, col in BODY_COLORS:
-            who.add_radiobutton(label=f"Color {label.lower()}", value=col, variable=self.body_var,
+            who.add_radiobutton(label=_("Color {name}", name=_(label).lower()), value=col, variable=self.body_var,
                                 command=lambda col=col: self.set("body", col))
-        m.add_cascade(label="Personaje", menu=who)
+        m.add_cascade(label=_("Personaje"), menu=who)
         modes = tk.Menu(m, tearoff=0, font=font)
         for label, k in [("Claude Code", "claude"), ("Solo compañero", "companion")]:
-            modes.add_radiobutton(label=label, value=k, variable=self.mode_var, command=lambda k=k: self.set("mode", k))
-        m.add_cascade(label="Modo", menu=modes)
+            modes.add_radiobutton(label=_(label), value=k, variable=self.mode_var, command=lambda k=k: self.set("mode", k))
+        m.add_cascade(label=_("Modo"), menu=modes)
         show = tk.Menu(m, tearoff=0, font=font)
         for key, label in [("notifications", "Notificaciones"), ("weather", "Clima"), ("calendar", "Próxima cita"),
                            ("reply", "Responder a Claude desde la isla"), ("screenshots", "Vista previa de capturas"),
                            ("clipboard_text", "Texto copiado"), ("privacy", "Micrófono y cámara en uso"),
                            ("sound", "Sonidos")]:
-            check(show, key, label)
-        m.add_cascade(label="Mostrar", menu=show)
-        check(m, "hide_fullscreen", "Ocultar en pantalla completa")
-        m.add_checkbutton(label="Iniciar con Windows", variable=self.vars["startup"],
+            check(show, key, _(label))
+        m.add_cascade(label=_("Mostrar"), menu=show)
+        check(m, "hide_fullscreen", _("Ocultar en pantalla completa"))
+        m.add_checkbutton(label=_("Iniciar con Windows"), variable=self.vars["startup"],
                           command=lambda: set_startup(self.vars["startup"].get()))
-        check(m, "updates", "Buscar actualizaciones")
+        check(m, "updates", _("Buscar actualizaciones"))
         m.add_separator()
-        m.add_command(label="Ver registro de errores", command=self.open_log)
-        m.add_command(label="Ocultar", accelerator=self.cfg["hotkeys"].get("toggle", ""), command=self.toggle)
-        m.add_command(label="Salir", command=self.quit)
+        m.add_command(label=_("Ver registro de errores"), command=self.open_log)
+        m.add_command(label=_("Ocultar"), accelerator=self.cfg["hotkeys"].get("toggle", ""), command=self.toggle)
+        self.hide_item = m.index("end")
+        m.add_command(label=_("Salir"), command=self.quit)
+        self.update_item = None  # "Actualizar a la versión…" (se agrega arriba cuando hay una nueva)
         m.configure(postcommand=self.menu_update_item)
 
     def menu_update_item(self):
         """Antes de abrir el menú: el texto del enfoque y, si hay versión nueva, "Actualizar" arriba de todo."""
-        for i in range(self.menu.index("end") + 1):
-            if self.menu.type(i) == "command" and self.menu.entrycget(i, "label") == "Ocultar":
-                self.menu.entryconfig(i, accelerator=self.cfg["hotkeys"].get("toggle", ""))
-            if self.menu.type(i) == "command" and "enfoque" in self.menu.entrycget(i, "label"):
-                self.menu.entryconfig(i, label="Terminar enfoque" if self.focus.phase else "Empezar enfoque (25 + 5 min)")
-        label = f"Actualizar a la versión {self.updater.latest[0]}" if self.updater.latest else None
-        if label and self.menu.entrycget(0, "label") != label:
-            if self.menu.entrycget(0, "label").startswith("Actualizar"):
+        shift = 1 if self.update_item else 0  # el ítem de actualizar, si está, corre los demás uno abajo
+        self.menu.entryconfig(self.hide_item + shift, accelerator=self.cfg["hotkeys"].get("toggle", ""))
+        self.menu.entryconfig(self.focus_item + shift, label=_("Terminar enfoque") if self.focus.phase
+                              else _("Empezar enfoque (25 + 5 min)"))
+        label = _("Actualizar a la versión {version}", version=self.updater.latest[0]) if self.updater.latest else None
+        if label and label != self.update_item:
+            if self.update_item:
                 self.menu.delete(0)
             self.menu.insert_command(0, label=label, command=self.updater.install)
+            self.update_item = label
 
     def popup(self, e):
         """Menú de ajustes. Un menú de Windows solo se cierra al hacer clic afuera si su ventana tiene el
@@ -419,7 +433,7 @@ class Island:
     def open_log(self):
         import registro
         if not registro.LOG.exists():
-            registro.write("sin errores hasta ahora")
+            registro.write(_("sin errores hasta ahora"))
         os.startfile(registro.LOG)
 
     def run_action(self, action):
@@ -438,6 +452,11 @@ class Island:
         """Cambia un atajo; devuelve True si quedó registrado (False si otra app ya lo usa)."""
         self.set("hotkeys", {**self.cfg["hotkeys"], action: text})
         return action not in self.hotkeys.apply(self.cfg["hotkeys"])
+
+    def reopen_settings(self):
+        if self.settings:
+            self.settings.close()
+        self.open_settings()
 
     def request_settings(self):
         self.settings_requested = True  # desde el hilo de la bandeja: se abre en el próximo tick
@@ -518,7 +537,7 @@ class Island:
 
     def hit_name(self, x, y):
         """Nombre de la zona clicable en (x, y) ("button" si no tiene nombre), o None."""
-        for x1, y1, x2, y2, _, name in reversed(self.hits):
+        for x1, y1, x2, y2, _act, name in reversed(self.hits):
             if x1 <= x <= x2 and y1 <= y <= y2:
                 return name or "button"
         return None
@@ -597,8 +616,8 @@ class Island:
         buf = io.BytesIO()
         im.save(buf, "PNG")
         data = buf.getvalue()
-        card = {"kind": "shot", "icon": "clip", "title": "Captura copiada",
-                "body": f"{im.width} × {im.height} · pégala con Ctrl+V", "until": time.time() + 7,
+        card = {"kind": "shot", "icon": "clip", "title": _("Captura copiada"),
+                "body": _("{w} × {h} · pégala con Ctrl+V", w=im.width, h=im.height), "until": time.time() + 7,
                 "thumb": art_surface(data, round(40 * self.S * 2))}
 
         def save():
@@ -606,8 +625,8 @@ class Island:
             folder.mkdir(parents=True, exist_ok=True)
             path = folder / f"captura-{datetime.now():%Y%m%d-%H%M%S}.png"
             path.write_bytes(data)
-            card.update(title="Captura guardada", body=f"Imágenes › Capturas › {path.name}", until=time.time() + 5,
-                        buttons=[("Mostrar", lambda: subprocess.Popen(["explorer", "/select,", str(path)]), True)])
+            card.update(title=_("Captura guardada"), body=_("Imágenes › Capturas › {name}", name=path.name),
+                        until=time.time() + 5, buttons=[(_("Mostrar"), lambda: subprocess.Popen(["explorer", "/select,", str(path)]), True)])
 
         def open_():
             import tempfile
@@ -615,7 +634,7 @@ class Island:
             path.write_bytes(data)
             os.startfile(path)
             card["until"] = 0
-        card["buttons"] = [("Abrir", open_, False), ("Guardar", save, True)]
+        card["buttons"] = [(_("Abrir"), open_, False), (_("Guardar"), save, True)]
         self.card = card
 
     def check_privacy(self):
@@ -625,28 +644,28 @@ class Island:
             for app in sorted(apps - self.inuse.get(cap, set())):
                 mic = cap == "microphone"
                 card = {"kind": "privacy", "icon": "mic" if mic else "cam", "until": time.time() + 6,
-                        "title": f"{app} está usando {'el micrófono' if mic else 'la cámara'}",
-                        "body": "Verás un punto junto a la isla mientras siga"}
+                        "title": _("{app} está usando el micrófono" if mic else "{app} está usando la cámara", app=app),
+                        "body": _("Verás un punto junto a la isla mientras siga")}
                 if mic:
                     def toggle(card=card):
                         muted = mic_mute(toggle=True)
-                        card.update(body="Micrófono silenciado" if muted else "Micrófono activado",
+                        card.update(body=_("Micrófono silenciado") if muted else _("Micrófono activado"),
                                     until=time.time() + 4,
-                                    buttons=[("Activar" if muted else "Silenciar", toggle, not muted)])
+                                    buttons=[(_("Activar") if muted else _("Silenciar"), toggle, not muted)])
                     muted = mic_mute()
-                    card["buttons"] = [("Activar" if muted else "Silenciar", toggle, not muted)]
+                    card["buttons"] = [(_("Activar") if muted else _("Silenciar"), toggle, not muted)]
                 self.card = card
         self.inuse = cur
 
     def focus_card(self, phase):
         minutes = Focus.MINUTES[phase]
         if phase == "work":
-            title, body = "A concentrarse", f"{minutes} minutos · ronda {self.focus.round}"
+            title, body = _("A concentrarse"), _("{minutes} minutos · ronda {round}", minutes=minutes, round=self.focus.round)
         else:
-            title = "¡Descanso largo!" if phase == "long" else "¡Descanso!"
-            body = f"{minutes} minutos · terminaste la ronda {self.focus.round}"
+            title = _("¡Descanso largo!") if phase == "long" else _("¡Descanso!")
+            body = _("{minutes} minutos · terminaste la ronda {round}", minutes=minutes, round=self.focus.round)
         self.card = {"kind": "focus", "icon": "focus", "title": title, "body": body, "until": time.time() + 8,
-                     "buttons": [("Terminar", self.stop_focus, False)]}
+                     "buttons": [(_("Terminar"), self.stop_focus, False)]}
         self.celebrate_t = time.time()
         if self.cfg["sound"]:
             winsound.MessageBeep(winsound.MB_ICONASTERISK)
@@ -672,32 +691,35 @@ class Island:
         if self.bat:
             if self.ac is not None and self.bat[1] != self.ac:
                 self.device_card("plug" if self.bat[1] else "battery",
-                                 "Cargando" if self.bat[1] else "Cargador desconectado", f"Batería al {self.bat[0]}%")
+                                 _("Cargando") if self.bat[1] else _("Cargador desconectado"),
+                                 _("Batería al {pct}%", pct=self.bat[0]))
             self.ac = self.bat[1]
         out = self.levels.device_event
         if out:
             self.levels.device_event = None
             phones = any(word in out.lower() for word in HEADPHONES)
-            self.device_card("headphones" if phones else "speaker", out, "Ahora el sonido sale por acá")
+            self.device_card("headphones" if phones else "speaker", out, _("Ahora el sonido sale por acá"))
         drives = removable_drives()
         if self.drives is not None:
             import shutil
             for letter in sorted(drives.keys() - self.drives.keys()):
                 root = letter + ":\\"
                 try:
-                    free = f" · {shutil.disk_usage(root).free / 1e9:.1f} GB libres"
+                    free = _(" · {gb} GB libres", gb=f"{shutil.disk_usage(root).free / 1e9:.1f}")
                 except OSError:
                     free = ""
-                self.device_card("usb", f"{drives[letter]} conectado", f"Unidad {letter}:{free} · clic para abrir",
+                self.device_card("usb", _("{name} conectado", name=drives[letter]),
+                                 _("Unidad {letter}:{free} · clic para abrir", letter=letter, free=free),
                                  lambda root=root: os.startfile(root))
             for letter in sorted(self.drives.keys() - drives.keys()):
-                self.device_card("usb", f"{self.drives[letter]} desconectado", f"Unidad {letter}: · ya puedes guardarla")
+                self.device_card("usb", _("{name} desconectado", name=self.drives[letter]),
+                                 _("Unidad {letter}: · ya puedes guardarla", letter=letter))
         self.drives = drives
 
     def next_session(self):
         items = self.claude.ordered()
         if items:
-            sid, _, i, n = self.session()
+            sid, _s, i, n = self.session()
             self.pinned = items[i % n][0]
 
     def tick(self):
@@ -770,7 +792,7 @@ class Island:
         self.vh = self.vh * 0.7 + (target[1] - self.h) * 0.1
         self.w = clamp(self.w + self.vw, SMALL[0] * 0.8, WIN[0] - 2 * SHOULDER - 2)
         self.h = clamp(self.h + self.vh, SMALL[1] * 0.8, WIN[1] - 2)
-        under = next((n for x1, y1, x2, y2, _, n in reversed(self.hits)
+        under = next((n for x1, y1, x2, y2, _act, n in reversed(self.hits)
                       if n and x1 <= lx <= x2 and y1 <= ly <= y2), None) if hover else None
         for n in self.hov:
             self.hov[n] += ((n == under) - self.hov[n]) * 0.25
@@ -845,7 +867,7 @@ class Island:
         elif mode == "big":
             a = clamp((h - 40) / (target[1] - 40)) ** 2
             if now < self.alert_until:
-                p.text(w / 2, h / 2, "⏰  ¡Tiempo!", "symbig", self.accent, a, anchor="center")
+                p.text(w / 2, h / 2, _("⏰  ¡Tiempo!"), "symbig", self.accent, a, anchor="center")
             else:
                 self.draw_blocks(w, now, mood, a)
         else:
@@ -871,7 +893,7 @@ class Island:
             for i in range(3):
                 bh = 3 + 5 * abs(math.sin(now * (5 + i * 1.7) + i))
                 p.line(44 + i * 4.5, h / 2 + 4.5, 44 + i * 4.5, h / 2 + 4.5 - bh, self.accent, a, 2.4)
-        _, s, _, _ = self.session()
+        _sid, s, _i, _n = self.session()
         if s and s["since"] and not self.companion:  # Claude trabajando: cuánto lleva
             p.text(w / 2, h / 2, mmss(now - s["since"]), "clock", MOODS["focused"], a, anchor="center")
         else:
@@ -882,7 +904,7 @@ class Island:
         elif left:
             txt, col = mmss(left), self.accent
         elif mins is not None and mins <= 60:  # cita pronto: cuánto falta
-            txt, col = f"en {mins} min" if mins else "ahora", self.accent
+            txt, col = _("en {mins} min", mins=mins) if mins else _("ahora"), self.accent
         elif self.bat:
             txt, col = f"{self.bat[0]}%", self.sys_info()[2]
         elif self.weather.temp is not None and self.cfg["weather"]:  # escritorio: el clima es más útil que la CPU
@@ -967,16 +989,19 @@ class Island:
         kind, buttons = card["kind"], card.get("buttons", [])
         if kind == "update":
             ver = self.updater.latest[0] if self.updater.latest else ""
-            title = f"Nueva versión {ver}"
-            body = {"descargando": "Descargando… se reinicia sola al terminar",
-                    "error": "No se pudo descargar; prueba más tarde"}.get(self.updater.state,
-                                                                           "Isla dinámica se puede actualizar")
+            title = _("Nueva versión {version}", version=ver)
+            body = {"descargando": _("Descargando… se reinicia sola al terminar"),
+                    "error": _("No se pudo descargar; prueba más tarde")}.get(self.updater.state,
+                                                                              _("Isla dinámica se puede actualizar"))
             if self.updater.state == "":
-                buttons = [("Luego", lambda: card.update(until=0), False), ("Actualizar", self.updater.install, True)]
+                buttons = [(_("Luego"), lambda: card.update(until=0), False),
+                           (_("Actualizar"), self.updater.install, True)]
         elif kind == "cal":
             mins = max(0, round((card["start"] - datetime.now(timezone.utc)).total_seconds() / 60))
             title = card["title"]
-            body = f"Empieza {'ahora' if not mins else f'en {mins} min'} · {card['start'].strftime('%H:%M')}"
+            when = card["start"].strftime("%H:%M")
+            body = _("Empieza ahora · {time}", time=when) if not mins else _("Empieza en {mins} min · {time}",
+                                                                           mins=mins, time=when)
         else:
             title, body = card["title"], card["body"]
         if card.get("thumb"):  # captura: miniatura con esquinas redondeadas
@@ -1084,9 +1109,9 @@ class Island:
         top.geometry(f"{W}x{H}+{self.X + (self.W - W) // 2}+{self.Y + round((self.big_size()[1] + 10) * S)}")
         frame = tk.Frame(top, bg="#1c1c1e")
         frame.pack(fill="both", expand=True, padx=1, pady=1)
-        tk.Label(frame, text="Claude ›", bg="#1c1c1e", fg=self.accent, font=("Segoe UI", 10, "bold")).pack(
+        tk.Label(frame, text=_("Claude ›"), bg="#1c1c1e", fg=self.accent, font=("Segoe UI", 10, "bold")).pack(
             side="left", padx=(12, 4))
-        tk.Label(frame, text="Enter envía · Esc cancela", bg="#1c1c1e", fg=GREY, font=("Segoe UI", 8)).pack(
+        tk.Label(frame, text=_("Enter envía · Esc cancela"), bg="#1c1c1e", fg=GREY, font=("Segoe UI", 8)).pack(
             side="right", padx=10)
         entry = tk.Entry(frame, bg="#1c1c1e", fg=WHITE, insertbackground=WHITE, relief="flat", bd=0,
                          font=("Segoe UI", 11))
@@ -1123,9 +1148,9 @@ class Island:
         p.circle(50, h / 2, 3, MOODS["focused"], a)
         more = len(perms) - 1
         right = w - 160 - (22 if more else 0)
-        p.text(60, h / 2, p.fit(f"¿Permitir? {perms[0]['text']}", "title", right - 72), "title", WHITE, a)
-        for answer, label, x, bg, fg in [(True, "Permitir", right, "#b7f07a", "#000000"),
-                                         (False, "Denegar", right + 74, "#3a2626", "#ff9a9a")]:
+        p.text(60, h / 2, p.fit(_("¿Permitir? {text}", text=perms[0]["text"]), "title", right - 72), "title", WHITE, a)
+        for answer, label, x, bg, fg in [(True, _("Permitir"), right, "#b7f07a", "#000000"),
+                                         (False, _("Denegar"), right + 74, "#3a2626", "#ff9a9a")]:
             p.rrect(x, h / 2 - 14, x + 66, h / 2 + 14, 14, bg, a)
             p.text(x + 33, h / 2, label, "btn", fg, a, anchor="center")
             self.hit(x, 0, x + 70, h, lambda answer=answer: self.claude.answer(answer))
@@ -1135,7 +1160,7 @@ class Island:
     def draw_blocks(self, w, now, mood, a):
         """La isla abierta: los bloques elegidos, uno debajo del otro con una línea entre medio."""
         c = self.p.c
-        names = [b for b, _, _ in self.blocks()]
+        names = [b for b, _top, _h in self.blocks()]
         for i, (b, top, h) in enumerate(self.blocks()):
             if i:
                 self.p.line(18, top, w - 18, top, "#2a2a2e", a, 1)
@@ -1158,26 +1183,23 @@ class Island:
             p.text(x, 30, self.weather.icon, "symbig", WHITE, a)
             p.text(x + 34, 30, f"{self.weather.temp}°", "big", WHITE, a)
             x += 104
-        full_days = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
-        full_months = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre",
-                       "octubre", "noviembre", "diciembre"]
-        p.text(x, 21, f"{full_days[d.weekday()].capitalize()} {d.day} de {full_months[d.month - 1]}", "title", WHITE, a)
+        p.text(x, 21, long_date(d), "title", WHITE, a)
         nxt = self.calendar.next if self.cfg["calendar"] else None
         if nxt:
             mins = self.minutes_to_event()
-            when = f"en {mins} min" if mins is not None and mins < 60 else nxt[1].strftime("%H:%M")
+            when = _("en {mins} min", mins=mins) if mins is not None and mins < 60 else nxt[1].strftime("%H:%M")
             p.text(x, 40, p.fit(f"{when} · {nxt[0]}", "small", w - x - 22), "small", self.accent, a)
         else:
-            p.text(x, 40, "Sin citas por hoy", "small", GREY, a)
+            p.text(x, 40, _("Sin citas por hoy"), "small", GREY, a)
 
     def draw_system(self, w, a):
         """Sistema: barras de CPU, RAM y batería (si hay)."""
         p = self.p
-        bars = [("CPU", self.cpu_pct), ("RAM", self.ram_pct)] + ([("Batería", self.bat[0])] if self.bat else [])
+        bars = [("CPU", self.cpu_pct), ("RAM", self.ram_pct)] + ([(_("Batería"), self.bat[0])] if self.bat else [])
         col_w = (w - 44) / len(bars)
         for i, (label, pct) in enumerate(bars):
             x = 22 + i * col_w
-            hot = pct >= 90 if label != "Batería" else pct <= 20
+            hot = pct <= 20 if label == _("Batería") else pct >= 90
             p.text(x, 18, label, "small", GREY, a)
             p.text(x + col_w - 16, 18, f"{pct}%", "small", RED if hot else WHITE, a, anchor="e")
             p.line(x, 36, x + col_w - 16, 36, "#2c2c31", a, 6)
@@ -1205,11 +1227,11 @@ class Island:
             self.hit(0, 34, 80, 96, lambda: focus_terminal(s["pid"]))  # el robot también
         else:
             p.text(x + 12, 20, p.fit(name, "title", w - cw - x - 44), "title", WHITE, a)
-        status = s["status"] if s else "Sin sesiones activas"
+        status = s["status"] if s else _("Sin sesiones activas")
         if s and s["since"]:
             status += f"  ·  {mmss(now - s['since'])}"
-        elif s and s["took"] and status.startswith("Listo"):
-            status += f" en {mmss(s['took'])}"
+        elif s and s["took"]:
+            status = _("{status} en {time}", status=status, time=mmss(s["took"]))
         r = self.claude.reply
         if r and s and r["sid"] == sid and self.reply_box is None and not r.get("cancel") and now < r["until"]:
             bw, bx = 86, w - 22 - 86  # botón "Responder": el color se va vaciando con el tiempo que queda
@@ -1220,12 +1242,12 @@ class Island:
             p.c.clip()
             p.rrect(bx, 31, bx + bw, 49, 9, self.accent, a)
             p.c.restore()
-            p.text(bx + bw / 2, 40, "Responder", "btn", WHITE, a, anchor="center")
+            p.text(bx + bw / 2, 40, _("Responder"), "btn", WHITE, a, anchor="center")
             self.hit(bx - 4, 26, bx + bw + 4, 58, self.open_reply_box)
             p.text(x, 40, p.fit(status, "body", bx - x - 10), "body", WHITE, a)
         else:
             p.text(x, 40, p.fit(status, "body", w - x - 22), "body", WHITE, a)
-        detail = s["detail"][:3] if s else [("abre claude en una terminal", GREY)]
+        detail = s["detail"][:3] if s else [(_("abre claude en una terminal"), GREY)]
         if detail:
             p.rrect(x, 52, w - 22, 58 + 13 * len(detail) + 5, 10, FIELD, a)
             for j, (line, col) in enumerate(detail):
@@ -1306,7 +1328,7 @@ class Island:
         c.restore()
         d = datetime.now()
         x = x0 + size + 14
-        cx1, _ = p.text(w - 22, y0 + 12, time.strftime("%H:%M"), "clock", WHITE, a, anchor="e")
+        cx1, _end = p.text(w - 22, y0 + 12, time.strftime("%H:%M"), "clock", WHITE, a, anchor="e")
         if self.weather.temp is not None and self.cfg["weather"]:  # clima a la izquierda de la hora
             p.text(cx1 - 8, y0 + 12, f"{self.weather.icon} {self.weather.temp}°", "small", GREY, a, anchor="e")
         nxt = self.calendar.next if self.cfg["calendar"] else None
@@ -1314,9 +1336,9 @@ class Island:
             when = nxt[1].strftime("%H:%M")
             p.text(w - 22, y0 + 31, f"{when} {p.fit(nxt[0], 'small', 90)}", "small", self.accent, a, anchor="e")
         else:
-            p.text(w - 22, y0 + 31, f"{DAYS[d.weekday()]} {d.day} {MONTHS[d.month - 1]}", "small", GREY, a,
+            p.text(w - 22, y0 + 31, short_date(d), "small", GREY, a,
                    anchor="e")
-        p.text(x + sx, y0 + 12, p.fit(m.title or "Nada sonando", "title", w - x - 90), "title", WHITE, fade)
+        p.text(x + sx, y0 + 12, p.fit(m.title or _("Nada sonando"), "title", w - x - 90), "title", WHITE, fade)
         p.text(x + sx, y0 + 31, p.fit(m.artist, "small", w - x - 90), "small", GREY, fade)
         if m.end >= 1:
             pos = min(m.pos + (now - m.stamp if m.playing else 0), m.end)  # avanza suave entre sondeos
@@ -1335,9 +1357,9 @@ class Island:
             p.text(22, y, txt, font, col, a)
         if self.focus.phase:  # el enfoque usa la misma ficha
             left = self.focus.left()
-            label = ("Enfoque " if self.focus.phase == "work" else "Descanso ") + mmss(left)
+            label = _("Enfoque {left}" if self.focus.phase == "work" else "Descanso {left}", left=mmss(left))
         else:
-            label = mmss(left) if left else f"{self.timer.minutes} min"
+            label = mmss(left) if left else _("{n} min", n=self.timer.minutes)
         tw = p.width(label, "small") + 38
         p.rrect(w - 22 - tw, y - 13, w - 22, y + 13, 13, shade(self.accent, 0.22) if left else "#1f1f23", a)
         ix, col = w - 22 - tw + 15, self.accent if left else WHITE  # cronómetro dibujado

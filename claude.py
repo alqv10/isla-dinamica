@@ -5,6 +5,7 @@ import os
 import threading
 import time
 import winsound
+from textos import _
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from dibujo import GREEN, GREY, RED, WHITE
 
@@ -31,21 +32,21 @@ def describe(tool, inp):
     name = os.path.basename(str(inp.get("file_path") or inp.get("notebook_path") or ""))
     if tool in ("Edit", "MultiEdit"):
         edit = (inp.get("edits") or [inp])[0]
-        return f"Editando {name}", [(name, GREY), ("- " + first_line(edit.get("old_string")), RED),
+        return _("Editando {name}", name=name), [(name, GREY), ("- " + first_line(edit.get("old_string")), RED),
                                    ("+ " + first_line(edit.get("new_string")), GREEN)]
     if tool == "Write":
-        return f"Escribiendo {name}", [(name, GREY), ("+ " + first_line(inp.get("content")), GREEN)]
+        return _("Escribiendo {name}", name=name), [(name, GREY), ("+ " + first_line(inp.get("content")), GREEN)]
     if tool in ("Read", "NotebookEdit"):
-        return f"Leyendo {name}", []
+        return _("Leyendo {name}", name=name), []
     if tool in ("Bash", "PowerShell"):
-        return "Ejecutando comando", [("$ " + first_line(inp.get("command")), WHITE)]
+        return _("Ejecutando comando"), [("$ " + first_line(inp.get("command")), WHITE)]
     if tool in ("Grep", "Glob"):
-        return "Buscando", [(first_line(inp.get("pattern")), WHITE)]
+        return _("Buscando"), [(first_line(inp.get("pattern")), WHITE)]
     if tool in ("WebFetch", "WebSearch"):
-        return "Navegando", [(first_line(inp.get("url") or inp.get("query")), WHITE)]
+        return _("Navegando"), [(first_line(inp.get("url") or inp.get("query")), WHITE)]
     if tool in ("Agent", "Task"):
-        return "Delegando a un agente", [(first_line(inp.get("description")), WHITE)]
-    return f"Usando {tool}", []
+        return _("Delegando a un agente"), [(first_line(inp.get("description")), WHITE)]
+    return _("Usando {tool}", tool=tool), []
 
 
 def permission_text(tool, inp):
@@ -84,7 +85,7 @@ class ClaudeCode:
             return mood
         if self.perms:
             return "curious"
-        s, _ = self.current()
+        s, _count = self.current()
         return s["mood"] if s else "sleep"
 
     def answer(self, allow):
@@ -133,7 +134,7 @@ class ClaudeCode:
             with self.lock:
                 s = self.sessions.get(r["sid"])
                 if s:
-                    s.update(status="Pensando…", detail=[(first_line(text), GREY)], mood="focused",
+                    s.update(status=_("Pensando…"), detail=[(first_line(text), GREY)], mood="focused",
                              since=time.time(), took=None)
 
     def drop_reply(self, sid=None):
@@ -149,22 +150,22 @@ class ClaudeCode:
         tool, inp = ev.get("tool_name", ""), ev.get("tool_input") or {}
         with self.lock:
             s = self.sessions.setdefault(sid, {"project": os.path.basename(ev.get("cwd", "")) or "Claude",
-                                               "status": "Sesión iniciada", "detail": [], "mood": "happy",
+                                               "status": _("Sesión iniciada"), "detail": [], "mood": "happy",
                                                "born": time.time(), "since": None, "took": None})
             s["t"] = time.time()
             s["pid"] = ev.get("_pid") or s.get("pid")
             if name == "SessionEnd":
                 del self.sessions[sid]
             elif name == "UserPromptSubmit":
-                s.update(status="Pensando…", detail=[(first_line(ev.get("prompt")), GREY)], mood="focused",
+                s.update(status=_("Pensando…"), detail=[(first_line(ev.get("prompt")), GREY)], mood="focused",
                          since=time.time(), took=None)
             elif name == "PreToolUse":
                 s["status"], s["detail"] = describe(tool, inp)
                 s["mood"] = "focused"
             elif name == "Notification":
-                s.update(status=first_line(ev.get("message")) or "Te necesita", detail=[], mood="curious")
+                s.update(status=first_line(ev.get("message")) or _("Te necesita"), detail=[], mood="curious")
             elif name == "Stop":
-                s.update(status="Listo ✓", detail=[(first_line(ev.get("last_assistant_message")), GREY)],
+                s.update(status=_("Listo ✓"), detail=[(first_line(ev.get("last_assistant_message")), GREY)],
                          mood="happy", took=time.time() - s["since"] if s["since"] else None, since=None)
                 self.flash_until = time.time() + 5
         if name in ("PostToolUse", "Stop", "UserPromptSubmit", "SessionEnd"):
@@ -184,7 +185,7 @@ class ClaudeCode:
         if p["allow"] is None:
             return b""  # sin respuesta: Claude Code pregunta en la terminal como siempre
         decision = {"behavior": "allow"} if p["allow"] else \
-                   {"behavior": "deny", "message": "Denegado desde la isla dinámica"}
+                   {"behavior": "deny", "message": _("Denegado desde la isla dinámica")}
         return json.dumps({"hookSpecificOutput": {"hookEventName": "PermissionRequest",
                                                   "decision": decision}}).encode()
 

@@ -14,11 +14,17 @@ OUT = Path(__file__).parent / "test_visual"
 OUT.mkdir(exist_ok=True)
 island.CONFIG = Path(tempfile.gettempdir()) / "isla-test-visual.json"
 island.CONFIG.unlink(missing_ok=True)
+LANG = os.environ.get("ISLA_LANG", "es")  # ISLA_LANG=en python test_visual.py: todo en inglés
+island.CONFIG.write_text('{"language": "%s"}' % LANG, encoding="utf-8")
+OUT = OUT / LANG
+OUT.mkdir(exist_ok=True)
 
 isl = island.Island()
 isl.root.withdraw()
 isl.check_privacy = lambda: None  # sin leer el registro real
 isl.check_clipboard = lambda: None
+isl.cfg["hide_fullscreen"] = False  # que un juego o video abierto no oculte la isla durante el test
+isl.hidden = False
 isl.bat, isl.cpu_pct, isl.ram_pct = None, 14, 62
 m = isl.media
 m.title, m.artist, m.playing, m.end, m.pos, m.stamp = "Canción de prueba", "Artista", True, 200, 64, time.time()
@@ -105,6 +111,9 @@ except Exception as e:  # noqa: BLE001
     failures.append(f"ajustes: {type(e).__name__}: {e}")
 count += 1
 
+import textos  # noqa: E402
+if LANG == "en" and textos.MISSING:
+    failures.append("sin traducir: " + " | ".join(sorted(textos.MISSING)))
 if isl.tray:
     isl.tray.stop()
 print("\n".join(failures) if failures else f"ok ({count} dibujos, imágenes en {OUT.name}/)", flush=True)

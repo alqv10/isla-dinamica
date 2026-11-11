@@ -31,10 +31,8 @@ DIFF_BG = {RED: "#3a1c1f", GREEN: "#14301f"}  # fondo de las líneas del diff
 MOODS = {"happy": GREEN, "focused": "#f5a524", "curious": "#5ab4ff", "love": "#ff5c8a", "sleep": GREY}
 
 
-DAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 
 
-MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
 
 
 PRIVACY = {"microphone": "#ff9f0a", "webcam": "#30d158"}  # naranja = micrófono, verde = cámara (como el iPhone)
@@ -344,7 +342,7 @@ def robot_image():
 # Bloques de la isla abierta (widgets): nombre, alto. El usuario elige cuáles y en qué orden.
 WIDGETS = {"claude": ("Claude Code", 104), "music": ("Música", 110), "today": ("Hoy: clima, fecha y cita", 58),
            "system": ("Sistema: CPU, RAM y batería", 52)}
-WIN = (BIG[0] + 90, 6 + sum(h for _, h in WIDGETS.values()) + 30)  # ventana fija: entra la isla más alta posible
+WIN = (BIG[0] + 90, 6 + sum(h for _name, h in WIDGETS.values()) + 30)  # ventana fija: entra la isla más alta posible
 
 
 SHOULDER = 9  # radio de las curvas donde la isla se une al borde de arriba
