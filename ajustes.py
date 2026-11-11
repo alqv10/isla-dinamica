@@ -70,6 +70,7 @@ class Settings:
         self.section(_("Isla"))
         self.swatches(_("Color de acento"), "accent", island.ACCENTS)
         self.segmented(_("Modo"), "mode", [("Claude Code", "claude"), (_("Solo compañero"), "companion")])
+        self.segmented(_("Fondo"), "theme", [(_(label), k) for label, k in island.THEMES])
         self.segmented(_("Tamaño"), "size", [(_("Normal"), 1.0), (_("Grande"), 1.2), (_("Muy grande"), 1.4)])
         mons = island.monitors()
         screens = [(_("Principal"), "primary"), (_("La del mouse"), "mouse")]
@@ -90,7 +91,7 @@ class Settings:
                            ("screenshots", "Vista previa de capturas de pantalla"),
                            ("clipboard_text", "Mostrar el texto que copias"),
                            ("privacy", "Avisar cuando se usa el micrófono o la cámara"),
-                           ("sound", "Sonidos"), ("translucent", "Isla translúcida"),
+                           ("sound", "Sonidos"),
                            ("hide_fullscreen", "Ocultar con juegos y videos en pantalla completa"),
                            ("updates", "Buscar actualizaciones")]:
             self.switch(_(label), lambda key=key: self.cfg[key], lambda v, key=key: self.change(key, v))

@@ -37,7 +37,7 @@ CONFIG = Path.home() / ".isla-dinamica.json"
 
 
 DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications": True, "accent": "#3ddc84",
-            "translucent": False, "weather": True, "calendar": True, "updates": True, "reply": True,
+            "translucent": False, "theme": "black", "weather": True, "calendar": True, "updates": True, "reply": True,
             "character": "robot", "body": "#f2f2f2",
             "mode": "claude",  # "claude" | "companion"
             "monitor": "primary",  # "primary", "mouse" o el nombre de una pantalla, como \\.\DISPLAY2
@@ -164,6 +164,8 @@ class Island:
     def __init__(self):
         first_run = not CONFIG.exists()
         self.cfg = load_config()
+        if self.cfg.get("translucent") and self.cfg["theme"] == "black":  # versiones viejas: "translúcida" = vidrio
+            self.cfg.update(theme="glass", translucent=False)
         dpi_scale()  # pide píxeles reales a Windows (antes de medir pantallas)
         self.mon = pick_monitor(monitors(), self.cfg["monitor"], self.pointer())
         self.base_S = self.mon["scale"] if self.mon else 1.0
@@ -216,6 +218,8 @@ class Island:
         self.pressed = {}  # botón -> momento del último clic
         self.morph = 0.0  # 0 = ▶, 1 = ⏸ (se transforma de a poco)
         self.art_k = 1.0  # tamaño de la carátula: chica en pausa, grande sonando
+        self.album = [40.0, 40.0, 60.0]  # color del fondo "Carátula" (va hacia el de la canción, de a poco)
+        self.album_target, self.album_art = (40, 40, 60), None
         self.build_menu()
         self.settings, self.settings_requested = None, False  # ventana de ajustes (ajustes.py)
         self.chat = None  # panel de chat con Claude (chat.py)
@@ -349,7 +353,7 @@ class Island:
                 self.root.after(0, self.reopen_settings)
         # el menú rápido muestra lo mismo que la ventana de ajustes
         var = {"size": "size_var", "accent": "accent_var", "character": "char_var", "body": "body_var",
-               "mode": "mode_var"}.get(key)
+               "mode": "mode_var", "theme": "theme_var"}.get(key)
         if var and hasattr(self, var):
             getattr(self, var).set(value)
         elif key in getattr(self, "vars", {}):
@@ -384,7 +388,10 @@ class Island:
             look.add_radiobutton(label=_("Color {name}", name=_(label).lower()), value=col, variable=self.accent_var,
                                  command=lambda col=col: self.set("accent", col))
         look.add_separator()
-        check(look, "translucent", _("Translúcida"))
+        self.theme_var = tk.StringVar(value=self.cfg["theme"])
+        for label, k in THEMES:
+            look.add_radiobutton(label=_("Fondo: {name}", name=_(label)), value=k, variable=self.theme_var,
+                                 command=lambda k=k: self.set("theme", k))
         m.add_cascade(label=_("Apariencia"), menu=look)
         self.char_var, self.body_var = tk.StringVar(value=self.cfg["character"]), tk.StringVar(value=self.cfg["body"])
         self.mode_var = tk.StringVar(value=self.cfg["mode"])
@@ -921,6 +928,14 @@ class Island:
         self.morph += (self.media.playing - self.morph) * 0.25
         self.drag_vis += (self.drag_dx - self.drag_vis) * 0.35
         self.art_k += ((1.0 if self.media.playing else 0.9) - self.art_k) * 0.15
+        if self.cfg["theme"] == "album":
+            if self.media.art is not self.album_art:
+                self.album_art = self.media.art
+                try:
+                    self.album_target = album_color(self.media.art) if self.media.art and Image else (40, 40, 60)
+                except OSError:
+                    self.album_target = (40, 40, 60)
+            self.album = [v + (t - v) * 0.06 for v, t in zip(self.album, self.album_target)]
         visible = self.shown and not (self.hidden and mode != "perm")
         if visible or not self.cleared:  # oculta: se borra una vez y no se vuelve a dibujar
             self.draw(self.w, self.h, now, mode, target)
@@ -965,16 +980,7 @@ class Island:
             return
         c.scale(self.S, self.S)
         c.translate(self.left_edge(), 0)
-        self.shape(w, h)
-        if self.cfg["translucent"]:  # vidrio oscuro: se ve un poco lo de atrás, con un borde sutil
-            c.set_source_rgba(0.03, 0.03, 0.05, 0.78)
-            c.fill_preserve()
-            c.set_source_rgba(1, 1, 1, 0.09)
-            c.set_line_width(1)
-            c.stroke_preserve()
-        else:
-            c.set_source_rgb(0, 0, 0)
-            c.fill_preserve()
+        self.paint_background(w, h, now)
         c.save()
         c.clip()  # el contenido no se sale de la isla mientras se anima
         near = clamp(1 - abs(w - target[0]) / 100 - abs(h - target[1]) / 40)  # fundido al llegar
@@ -999,6 +1005,51 @@ class Island:
         c.restore()
         for i, cap in enumerate(c for c in ("microphone", "webcam") if self.inuse.get(c)):
             p.circle(w + 10 + i * 10, 10, 3.5, PRIVACY[cap], 1)
+
+    def paint_background(self, w, h, now):
+        """Sombra suave + el fondo elegido. Deja la silueta como camino actual (para recortar el contenido)."""
+        c, theme = self.p.c, self.cfg["theme"]
+        for spread, alpha in ((12, 0.035), (8, 0.05), (5, 0.07), (2.5, 0.09)):  # sombra: copias más grandes y tenues
+            c.save()
+            c.translate(-spread / 2, 0)
+            self.shape(w + spread, h + spread * 0.9)
+            c.set_source_rgba(0, 0, 0, alpha)
+            c.fill()
+            c.restore()
+        self.shape(w, h)
+        if theme == "glass":  # vidrio oscuro: se ve un poco lo de atrás
+            c.set_source_rgba(0.03, 0.03, 0.05, 0.78)
+            c.fill_preserve()
+        else:
+            c.set_source_rgb(0, 0, 0)
+            c.fill_preserve()
+        if theme == "aurora":  # manchas de color que se mueven despacio
+            c.save()
+            c.clip_preserve()
+            for (cx, cy, r, col, alpha) in (
+                    (w * (0.28 + 0.18 * math.sin(now * 0.35)), h * (0.85 + 0.15 * math.cos(now * 0.27)), w * 0.55,
+                     self.accent, 0.32),
+                    (w * (0.75 + 0.15 * math.cos(now * 0.29)), h * (0.15 + 0.2 * math.sin(now * 0.31)), w * 0.45,
+                     "#5a7bff", 0.24),
+                    (w * (0.5 + 0.3 * math.sin(now * 0.21 + 2)), h * 1.1, w * 0.4, "#ff5c8a", 0.16)):
+                g = cairo.RadialGradient(cx, cy, 0, cx, cy, r)
+                rgb = [int(col[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+                g.add_color_stop_rgba(0, *rgb, alpha)
+                g.add_color_stop_rgba(1, *rgb, 0)
+                c.set_source(g)
+                c.paint()
+            c.restore()
+        elif theme == "album":  # degradado con el color de la canción
+            r, g_, b = (v / 255 for v in self.album)
+            grad = cairo.LinearGradient(0, 0, 0, h)
+            grad.add_color_stop_rgba(0, r * 0.25, g_ * 0.25, b * 0.25, 0.9)
+            grad.add_color_stop_rgba(1, r * 0.55, g_ * 0.55, b * 0.55, 0.95)
+            c.set_source(grad)
+            c.fill_preserve()
+        if theme != "black":  # borde sutil
+            c.set_source_rgba(1, 1, 1, 0.08)
+            c.set_line_width(1)
+            c.stroke_preserve()
 
     def sys_info(self):
         """(texto, fuente, color) de batería o, en PCs de escritorio, CPU y RAM."""

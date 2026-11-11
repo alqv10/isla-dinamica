@@ -68,6 +68,17 @@ for combo in (["claude", "music", "today", "system"], ["today", "music"], ["syst
     isl.cfg["widgets"] = combo
     check("widgets-" + "-".join(combo), "big", isl.big_size())
 isl.cfg["widgets"] = ["claude", "music"]
+buf_art = io.BytesIO()
+from PIL import Image as _Image  # noqa: E402
+_Image.new("RGB", (64, 64), (230, 120, 40)).save(buf_art, "PNG")  # carátula naranja: el fondo "Carátula" la usa
+m.art = buf_art.getvalue()
+for theme in [k for _label, k in island.THEMES]:
+    isl.cfg["theme"] = theme
+    isl.album_art, isl.album = None, list(island.album_color(m.art))
+    check(f"fondo-{theme}", "big", big)
+    check(f"fondo-{theme}-cerrada", "small", island.SMALL)
+isl.cfg["theme"] = "black"
+m.art = None
 check("permiso", "perm", island.PERM,
       lambda: cc.perms.append({"sid": "a", "text": "git push", "done": None, "allow": None}))
 cc.perms.clear()

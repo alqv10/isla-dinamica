@@ -339,6 +339,22 @@ def robot_image():
     return im
 
 
+THEMES = [("Negro", "black"), ("Vidrio", "glass"), ("Aurora", "aurora"), ("Carátula", "album")]  # fondos
+
+
+def album_color(data):
+    """Color más vivo de una carátula (bytes): el que tiñe la isla con el fondo "Carátula"."""
+    import colorsys
+    im = Image.open(io.BytesIO(data)).convert("RGB").resize((48, 48))
+    best, score = (90, 90, 110), -1
+    for count, (r, g, b) in im.getcolors(48 * 48):
+        h, s, v = colorsys.rgb_to_hsv(r / 255, g / 255, b / 255)
+        sc = count * (0.2 + s) * (0.3 + v) * (v > 0.15)  # frecuente, saturado y no muy oscuro
+        if sc > score:
+            best, score = (r, g, b), sc
+    return best
+
+
 # Bloques de la isla abierta (widgets): nombre, alto. El usuario elige cuáles y en qué orden.
 WIDGETS = {"claude": ("Claude Code", 104), "music": ("Música", 110), "today": ("Hoy: clima, fecha y cita", 58),
            "system": ("Sistema: CPU, RAM y batería", 52)}

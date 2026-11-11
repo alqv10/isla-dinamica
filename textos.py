@@ -105,6 +105,9 @@ EN = {
     "Enter envía · Ctrl+V pega una captura · Esc cierra": "Enter sends · Ctrl+V pastes a screenshot · Esc closes",
     "+ {n} captura(s) adjunta(s) · clic para quitar": "+ {n} screenshot(s) attached · click to remove",
     "  (+ {n} captura(s))": "  (+ {n} screenshot(s))",
+    # fondos
+    "Fondo": "Background", "Fondo: {name}": "Background: {name}", "Negro": "Black", "Vidrio": "Glass",
+    "Aurora": "Aurora", "Carátula": "Album art",
     # menú y bandeja
     "Mostrar / ocultar": "Show / hide", "Ajustes…": "Settings…", "Salir": "Quit", "Ocultar": "Hide",
     "Empezar enfoque (25 + 5 min)": "Start focus (25 + 5 min)", "Terminar enfoque": "Stop focus",
