@@ -90,6 +90,14 @@ Image.new("RGB", (64, 36), (200, 80, 60)).save(buf, "PNG")
 check("tarjeta-captura", "card", island.NOTIF, lambda: (setattr(isl, "card", None), isl.shot_card(
     Image.open(io.BytesIO(buf.getvalue())))))
 isl.card = None
+class FakeChat:  # la cabecera del chat, sin abrir el panel ni llamar a Claude
+    busy = True
+    close = new = staticmethod(lambda: None)
+isl.chat = FakeChat()
+check("chat-pensando", "chat", island.PERM)
+FakeChat.busy = False
+check("chat", "chat", island.PERM)
+isl.chat = None
 isl.focus.start()
 check("cerrada-enfoque", "small", island.SMALL)
 isl.focus.stop()

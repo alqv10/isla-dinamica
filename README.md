@@ -32,6 +32,10 @@ pythonw island.py
 | ![Cerrada](docs/cerrada.png) | ![Permiso](docs/permiso.png) |
 | ![Notificación](docs/notificacion.png) | ![Volumen](docs/volumen.png) |
 
+**Chat con Claude**
+- Pregúntale lo que quieras sin salir de lo que estás haciendo: doble clic en el personaje, clic derecho → *Preguntarle a Claude…*, desde la bandeja o con un atajo propio.
+- Usa tu plan de Claude Code (Pro/Max) con la sesión que ya tienes iniciada: **no hace falta API key**. Claude solo conversa (sin herramientas, no toca archivos) y recuerda la conversación hasta que pulsas *Nueva*.
+
 **Personajes**
 
 ![Personajes](docs/personajes.png)
@@ -50,6 +54,9 @@ Robot, Chispa, Burbuja o Gato, en seis colores. Respiran, parpadean, te siguen c
 - Reloj, fecha, batería en laptops; CPU y RAM en PCs de escritorio.
 - Temporizador: rueda del mouse = minutos, clic = iniciar/parar.
 - Color de acento, modo translúcido y tres tamaños. Nítida en pantallas con escala 125–200 %.
+- Elige qué bloques se ven en la isla abierta (Claude Code, música, hoy, sistema) y en qué orden.
+- Atajos de teclado propios para mostrar/ocultar, enfoque, música, ajustes y chat.
+- En español o inglés (automático según Windows).
 
 **Uso**
 - Pasa el mouse para expandir.
@@ -68,7 +75,7 @@ La isla solo se conecta a internet para dos cosas, y las dos se pueden apagar co
 
 ## Desarrollo
 
-- Tests: `python test_island.py`
+- Tests: `python test_island.py` y `python test_visual.py` (dibuja todos los estados; `ISLA_LANG=en` para inglés)
 - Armar el instalador: `pip install pyinstaller` y `python build.py` → `dist/IslaDinamica-Setup.exe`
 
 | Archivo | Qué es |
@@ -76,6 +83,8 @@ La isla solo se conecta a internet para dos cosas, y las dos se pueden apagar co
 | `island.py` | La isla (tkinter + cairo sobre una ventana con transparencia por píxel) |
 | `claude_hook.py` | Hook que Claude Code ejecuta en cada evento; se lo pasa a la isla |
 | `install_hooks.py` | Agrega/quita los hooks en `~/.claude/settings.json` (deja copia `.bak`) |
+| `sistema.py`, `servicios.py`, `claude.py`, `dibujo.py` | Windows, servicios de fondo, Claude Code y dibujo |
+| `ajustes.py`, `chat.py`, `textos.py`, `registro.py` | Ventana de ajustes, chat, idiomas y registro de errores |
 | `app.py`, `instalador.py`, `build.py` | El .exe, el instalador y cómo se arman |
 
 Licencia MIT.

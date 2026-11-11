@@ -63,6 +63,21 @@ def short_date(d):
 EN = {
     # nombres que no cambian, e idiomas (cada uno en su propio idioma)
     "Claude Code": "Claude Code", "Automático": "Automatic", "Español": "Español", "English": "English",
+    # chat
+    "Preguntarle a Claude…": "Ask Claude…", "Preguntarle a Claude": "Ask Claude", "Pregúntale a Claude": "Ask Claude",
+    "Claude está pensando…": "Claude is thinking…", "Nueva": "New", "×": "×", "Enter envía · Esc cierra":
+        "Enter sends · Esc closes", "Tú: {text}": "You: {text}", "Conversación nueva.": "New conversation.",
+    "Pregúntale lo que quieras a Claude. Usa tu plan de Claude Code (sin API key).":
+        "Ask Claude anything. It uses your Claude Code plan (no API key).",
+    "Respondes desde una ventanita pequeña en el escritorio: sé breve y claro, en el idioma de la pregunta, sin "
+    "títulos ni tablas.": "You answer from a small window on the desktop: be brief and clear, in the language of "
+                          "the question, without headings or tables.",
+    "No encontré Claude Code. Instálalo e inicia sesión con `claude` en una terminal.":
+        "Claude Code wasn't found. Install it and sign in by running `claude` in a terminal.",
+    "Claude no respondió. ¿Tienes sesión iniciada en Claude Code?":
+        "Claude didn't answer. Are you signed in to Claude Code?",
+    "Claude tardó demasiado en responder.": "Claude took too long to answer.",
+    "No se pudo hablar con Claude: {error}": "Couldn't reach Claude: {error}",
     # menú y bandeja
     "Mostrar / ocultar": "Show / hide", "Ajustes…": "Settings…", "Salir": "Quit", "Ocultar": "Hide",
     "Empezar enfoque (25 + 5 min)": "Start focus (25 + 5 min)", "Terminar enfoque": "Stop focus",

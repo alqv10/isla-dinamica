@@ -44,7 +44,7 @@ DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications"
             "screenshots": True, "clipboard_text": False, "privacy": True,
             "widgets": ["claude", "music"],
             # atajos: en teclados en español Ctrl+Alt = AltGr, por eso solo uno viene puesto
-            "hotkeys": {"toggle": "Ctrl+Alt+I", "focus": "", "play": "", "settings": ""},
+            "hotkeys": {"toggle": "Ctrl+Alt+I", "focus": "", "play": "", "settings": "", "chat": ""},
             "language": "auto"}  # "auto" (el de Windows), "es" o "en"  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
 
 
@@ -79,13 +79,14 @@ def set_startup(on):
         STARTUP.unlink(missing_ok=True)
 
 
-def start_tray(toggle, quit_, settings):
+def start_tray(toggle, quit_, settings, chat):
     """Ícono en la bandeja de Windows: clic = mostrar/ocultar la isla."""
     try:
         import pystray
     except ImportError:
         return None
     menu = pystray.Menu(pystray.MenuItem(lambda item: _("Mostrar / ocultar"), lambda: toggle(), default=True),
+                        pystray.MenuItem(lambda item: _("Preguntarle a Claude…"), lambda: chat()),
                         pystray.MenuItem(lambda item: _("Ajustes…"), lambda: settings()),
                         pystray.MenuItem(lambda item: _("Salir"), lambda: quit_()))
     tray = pystray.Icon("isla-dinamica", robot_image().resize((64, 64), Image.LANCZOS), "Isla dinámica", menu)
@@ -94,7 +95,8 @@ def start_tray(toggle, quit_, settings):
 
 
 HOTKEY_ACTIONS = [("toggle", "Mostrar u ocultar la isla"), ("focus", "Empezar o terminar el enfoque"),
-                  ("play", "Pausar o seguir la música"), ("settings", "Abrir los ajustes")]
+                  ("play", "Pausar o seguir la música"), ("settings", "Abrir los ajustes"),
+                  ("chat", "Preguntarle a Claude")]
 MODS = {"Ctrl": 0x2, "Alt": 0x1, "Shift": 0x4, "Win": 0x8}
 KEYS = {**{chr(c): c for c in range(ord("A"), ord("Z") + 1)}, **{str(d): ord(str(d)) for d in range(10)},
         **{f"F{n}": 0x6F + n for n in range(1, 13)}, "Espacio": 0x20, "Inicio": 0x24, "Fin": 0x23,
@@ -204,7 +206,9 @@ class Island:
         self.art_k = 1.0  # tamaño de la carátula: chica en pausa, grande sonando
         self.build_menu()
         self.settings, self.settings_requested = None, False  # ventana de ajustes (ajustes.py)
-        self.tray = start_tray(self.toggle, self.request_quit, self.request_settings)
+        self.chat = None  # panel de chat con Claude (chat.py)
+        self.tray = start_tray(self.toggle, self.request_quit, self.request_settings,
+                               lambda: self.actions.append("chat"))
         self.actions = []  # acciones pedidas desde otros hilos (atajos): se hacen en el próximo tick
         self.hotkeys = Hotkeys(self.actions.append)
         self.hotkeys.apply(self.cfg["hotkeys"])
@@ -284,6 +288,8 @@ class Island:
 
     def mood(self, now):
         """Ánimo del personaje: el de Claude Code, o en modo compañero, según lo que pasa en tu PC."""
+        if self.chat and self.chat.busy:
+            return "focused"  # pensando la respuesta del chat
         if not self.companion:
             mood = self.claude.mood()
             return "sleep" if mood == "happy" and self.idle > 300 else mood  # hace rato que no estás
@@ -337,6 +343,7 @@ class Island:
     def build_menu(self):
         font = ("Segoe UI", 10)
         m = self.menu = tk.Menu(self.root, tearoff=0, font=font)
+        m.add_command(label=_("Preguntarle a Claude…"), command=self.open_chat)
         m.add_command(label=_("Ajustes…"), command=self.open_settings)
         m.add_command(label=_("Empezar enfoque (25 + 5 min)"), command=self.toggle_focus)
         self.focus_item = m.index("end")
@@ -447,11 +454,21 @@ class Island:
             self.pressed["play"] = time.time()
         elif action == "settings":
             self.open_settings()
+        elif action == "chat":
+            self.open_chat()
 
     def set_hotkey(self, action, text):
         """Cambia un atajo; devuelve True si quedó registrado (False si otra app ya lo usa)."""
         self.set("hotkeys", {**self.cfg["hotkeys"], action: text})
         return action not in self.hotkeys.apply(self.cfg["hotkeys"])
+
+    def open_chat(self):
+        if self.chat:
+            self.chat.top.lift()
+            self.chat.entry.focus_force()
+            return
+        from chat import ChatPanel
+        self.chat = ChatPanel(self)
 
     def reopen_settings(self):
         if self.settings:
@@ -524,6 +541,8 @@ class Island:
 
     def double_click(self, e):
         x, y = self.local(e)
+        if self.mode == "small" and x < 42:  # doble clic en el personaje: chat con Claude
+            return self.open_chat()
         if self.in_music(y) and not self.hit_name(x, y) and x < self.w - 120:  # carátula o título
             focus_app(self.media.app)
 
@@ -774,6 +793,8 @@ class Island:
         replying = self.reply_box is not None or (reply and not reply.get("cancel") and now < reply["until"])
         if self.claude.perms:  # aunque haya hover: si se expandiera, los botones se escaparían del mouse
             mode = "perm"
+        elif self.chat:
+            mode = "chat"
         elif now < self.levels.until:
             mode = "level"
         elif note and now < note["until"]:
@@ -786,7 +807,7 @@ class Island:
             mode = "small"
         self.mode = mode
         big = self.big_size()
-        target = {"perm": PERM, "level": LEVEL, "note": NOTIF, "card": NOTIF, "big": big, "small": SMALL}[mode]
+        target = {"perm": PERM, "chat": PERM, "level": LEVEL, "note": NOTIF, "card": NOTIF, "big": big, "small": SMALL}[mode]
         # resorte amortiguado: se pasa un poquito y vuelve, como en el iPhone
         self.vw = self.vw * 0.7 + (target[0] - self.w) * 0.1
         self.vh = self.vh * 0.7 + (target[1] - self.h) * 0.1
@@ -858,6 +879,8 @@ class Island:
         near = clamp(1 - abs(w - target[0]) / 100 - abs(h - target[1]) / 40)  # fundido al llegar
         if mode == "perm":
             self.draw_perm(w, h, now, mood, near)
+        elif mode == "chat":
+            self.draw_chat(w, h, now, mood, near)
         elif mode == "level":
             self.draw_level(w, h, near)
         elif mode == "note":
@@ -1139,6 +1162,23 @@ class Island:
         top.destroy()
         if before:  # volver a la app en la que estabas
             ctypes.windll.user32.SetForegroundWindow(ctypes.c_void_p(before))
+
+    def draw_chat(self, w, h, now, mood, a):
+        """Cabecera del chat: el personaje, qué está pasando y los botones Nueva / ×."""
+        p = self.p
+        if not self.chat:
+            return
+        self.char(p, 26, h / 2 + 2, 26, mood, now, a)
+        busy = self.chat.busy
+        title = _("Claude está pensando…") if busy else _("Pregúntale a Claude")
+        p.text(52, h / 2, title, "title", MOODS["focused"] if busy else WHITE, a)
+        right = w - 16
+        for label, act in ((_("×"), self.chat.close), (_("Nueva"), self.chat.new)):
+            bw = p.width(label, "btn") + 22
+            p.rrect(right - bw, h / 2 - 13, right, h / 2 + 13, 13, "#2a2a30", a)
+            p.text(right - bw / 2, h / 2, label, "btn", WHITE, a, anchor="center")
+            self.hit(right - bw, 0, right, h, act)
+            right -= bw + 8
 
     def draw_perm(self, w, h, now, mood, a):
         p, perms = self.p, self.claude.perms
