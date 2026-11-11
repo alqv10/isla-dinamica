@@ -184,11 +184,17 @@ class Paint:
         self.c.set_font_size(pt * 96 / 72)
 
     def width(self, s, font):
-        total = 0
-        for chunk, sym in self.runs(s):
-            self.font_run(font, sym)
-            total += self.c.text_extents(chunk).x_advance
-        return total
+        """Ancho del texto (se recuerda: medir textos era un tercio del costo de cada cuadro)."""
+        cache = self.__dict__.setdefault("_widths", {})
+        if (s, font) not in cache:
+            if len(cache) > 2000:
+                cache.clear()
+            total = 0
+            for chunk, sym in self.runs(s):
+                self.font_run(font, sym)
+                total += self.c.text_extents(chunk).x_advance
+            cache[s, font] = total
+        return cache[s, font]
 
     def fit(self, s, font, maxw):
         """Recorta el texto con … para que entre en maxw."""
@@ -200,8 +206,11 @@ class Paint:
 
     def text(self, x, y, s, font, col, a, anchor="w"):
         c = self.c
-        self.font(font)
-        ascent, descent = c.font_extents()[:2]  # alineación vertical según la fuente principal
+        extents = self.__dict__.setdefault("_extents", {})
+        if font not in extents:  # alineación vertical según la fuente principal (no cambia: se recuerda)
+            self.font(font)
+            extents[font] = c.font_extents()[:2]
+        ascent, descent = extents[font]
         wd = self.width(s, font)
         x -= {"w": 0, "center": wd / 2, "e": wd}[anchor]
         c.move_to(x, y + (ascent - descent) / 2)

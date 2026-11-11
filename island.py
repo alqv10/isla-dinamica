@@ -207,6 +207,7 @@ class Island:
         self.hidden, self.mode = False, "small"
         self.shown, self.quitting = True, False  # mostrar/ocultar a mano (bandeja o atajo)
         self.cleared = False  # ya se borró la ventana estando oculta
+        self.locked, self.last_ptr = False, (0, 0)  # PC bloqueada; dónde estaba el mouse en el cuadro anterior
         self.hit_dy = 0  # corrimiento de las zonas clicables del bloque que se está dibujando
         self.keep_open_until = 0  # abierta a la fuerza (menú de ajustes recién usado)
         self.drag = None  # (x inicial, y inicial) de un arrastre sobre la música
@@ -1043,7 +1044,8 @@ class Island:
         if now - self.stats_at >= 1:
             self.stats_at = now
             self.bat, self.cpu_pct, self.ram_pct = battery(), self.cpu.percent(), ram()
-            self.hidden = self.cfg["hide_fullscreen"] and fullscreen()
+            self.locked = locked()
+            self.hidden = (self.cfg["hide_fullscreen"] and fullscreen()) or self.locked
             self.follow_monitor()
             self.check_devices(now)
             self.check_privacy()
@@ -1056,6 +1058,7 @@ class Island:
                 self.stats.mark("summary_shown")
                 self.summary_card()
             self.idle = idle_seconds()
+            self.notes.away = self.idle >= 60 or self.locked
         left = self.timer.left()
         if left is not None and left <= 0:
             self.timer.ends = None
@@ -1149,7 +1152,21 @@ class Island:
                   or (mode == "big" and (under or any(0.01 < v < 0.99 for v in self.hov.values())
                                          or abs(self.media.playing - self.morph) > 0.01
                                          or abs((1.0 if self.media.playing else 0.9) - self.art_k) > 0.002)))
-        root.after(16 if moving else 250 if not visible else 33 if mode != "small" else 66, self.tick)
+        # ahorro de batería: quieta y sin nadie, 1 cuadro por segundo (el reloj); cerrada y quieta, 10; si
+        # el mouse se mueve, más fluida (los ojos lo siguen). Bloqueada u oculta: casi nada.
+        pointer_moved = (px, py) != self.last_ptr
+        self.last_ptr = (px, py)
+        if moving:
+            delay = 16
+        elif not visible:
+            delay = 1000 if self.locked else 250
+        elif self.idle >= 60 and mode == "small" and not self.focus.phase and self.cfg["theme"] != "aurora":
+            delay = 1000
+        elif mode == "small":
+            delay = 33 if pointer_moved else 100
+        else:
+            delay = 33
+        root.after(delay, self.tick)
 
     # --- dibujo ---
 

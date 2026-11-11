@@ -173,16 +173,22 @@ class Levels:
             import screen_brightness_control as sbc
         except ImportError:
             return
+        try:  # solo laptops (WMI, rápido); en monitores de escritorio (DDC/VCP) cada lectura tarda ~30 ms y
+            # los cambios hechos con los botones del monitor igual llegan tarde: no vale la pena
+            if getattr(sbc.list_monitors_info()[0].get("method"), "__name__", "") != "WMI":
+                return
+        except Exception:  # la librería tira sus propios errores
+            return
         last = None
         while True:
             try:
-                now = sbc.get_brightness(display=0)[0]
+                now = sbc.get_brightness(display=0, method="wmi")[0]
             except Exception:  # la librería tira sus propios errores; monitor sin DDC/CI = sin brillo
                 return
             if last is not None and now != last:
                 self.show("sun", now)
             last = now
-            time.sleep(1.5)  # cada lectura cuesta ~12 ms de CPU (DDC/WMI)
+            time.sleep(2)
 
 
 class Notifications:
@@ -190,6 +196,7 @@ class Notifications:
     def __init__(self, loop):
         self.current = None  # {"app", "title", "body", "icon", "until"}
         self.enabled = True
+        self.away = False  # la isla avisa si te alejaste: se pregunta menos y no se muestran al volver
         if UserNotificationListener:
             asyncio.run_coroutine_threadsafe(self.poll(), loop)
 
@@ -201,14 +208,16 @@ class Notifications:
         while True:
             try:
                 found = list(await listener.get_notifications_async(NotificationKinds.TOAST))
-                if seen is not None and self.enabled:
+                if seen is not None and self.enabled and not self.away:
                     for n in found:
                         if n.id not in seen:
                             await self.show(n)
                 seen = {n.id for n in found}
             except OSError:
                 pass
-            await asyncio.sleep(1)
+            # cada consulta cuesta ~12 ms de CPU y Windows no avisa a las apps que no son de la Tienda:
+            # cada 2 s mientras usas la PC, cada 10 si no estás
+            await asyncio.sleep(10 if self.away else 2)
 
     async def show(self, n):
         binding = n.notification.visual.get_binding(KnownNotificationBindings.toast_generic)

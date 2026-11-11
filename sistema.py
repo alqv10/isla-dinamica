@@ -175,6 +175,17 @@ def pick_monitor(mons, choice, pointer):
     return named or next((m for m in mons if m["primary"]), mons[0] if mons else None)
 
 
+def locked():
+    """True con la PC bloqueada (Win+L) o en la pantalla de inicio de sesión: no hay escritorio de entrada."""
+    u = ctypes.windll.user32
+    u.OpenInputDesktop.restype = ctypes.c_void_p
+    desk = u.OpenInputDesktop(0, False, 0x0100)  # DESKTOP_SWITCHDESKTOP
+    if not desk:
+        return True
+    u.CloseDesktop(ctypes.c_void_p(desk))
+    return False
+
+
 def fullscreen():
     """True si hay un juego, video o presentación en pantalla completa."""
     state = ctypes.c_int()
