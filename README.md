@@ -25,6 +25,8 @@ pythonw island.py
 - Mientras trabaja, la isla cerrada muestra cuánto lleva; al terminar se abre unos segundos, suena un aviso y dice cuánto tardó.
 - Los pedidos de permiso aparecen en la isla con **Permitir** y **Denegar**. Si no respondes en 100 s, la pregunta vuelve a la terminal.
 - Cuando Claude termina, el botón **Responder** deja escribirle la siguiente instrucción desde la isla, sin ir a la terminal.
+- Cuando Claude te hace una pregunta con opciones, aparece en la isla con un botón por opción (o *En la terminal*).
+- Muestra el avance de su lista de tareas ("Tareas 3/7") y cuántos archivos cambió al terminar.
 - Varias sesiones: clic en **‹ 1/2 ›** para cambiar. Clic en el nombre del proyecto o en el robot para traer su terminal al frente.
 
 | | |
@@ -37,6 +39,8 @@ pythonw island.py
 - Usa tu plan de Claude Code (Pro/Max) con la sesión que ya tienes iniciada: **no hace falta API key**. Claude solo conversa (sin herramientas, no toca archivos) y recuerda la conversación hasta que pulsas *Nueva*.
 - La respuesta aparece mientras Claude la escribe, con formato (negritas, listas, código) y botón *Copiar*.
 - Pega una captura con Ctrl+V (o pulsa *Preguntar* en la tarjeta de captura) para preguntarle por ella.
+
+- **Dictar**: habla en vez de escribir (usa el dictado de Windows, Win+H).
 
 **Recordatorios**
 - Escribe en el chat "recuérdame en 20 min sacar la ropa", "avísame a las 18:30 que llame a mamá" o "recuérdame mañana a las 9 pagar la luz": la isla te avisa con tarjeta y sonido (con *+10 min* para posponer). Se ven y se borran con clic derecho → Recordatorios.
@@ -59,7 +63,9 @@ Robot, Chispa, Burbuja o Gato, en seis colores. Respiran, parpadean, te siguen c
 - Reloj, fecha, batería en laptops; CPU y RAM en PCs de escritorio.
 - Temporizador: rueda del mouse = minutos, clic = iniciar/parar.
 - Color de acento, modo translúcido y tres tamaños. Nítida en pantallas con escala 125–200 %.
-- Elige qué bloques se ven en la isla abierta (Claude Code, música, hoy, sistema) y en qué orden.
+- Fondos: negro, vidrio, aurora (colores que se mueven) o con el color de la carátula que suena.
+- Elige qué bloques se ven en la isla abierta (Claude Code, música, hoy, sistema, tu día) y en qué orden.
+- "Tu día": cuánto trabajó Claude, rondas de enfoque y canciones; resumen a las 21:30. Se guarda solo en tu PC.
 - Atajos de teclado propios para mostrar/ocultar, enfoque, música, ajustes y chat.
 - En español o inglés (automático según Windows).
 

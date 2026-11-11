@@ -19,6 +19,9 @@ island.CONFIG.write_text('{"language": "%s"}' % LANG, encoding="utf-8")
 OUT = OUT / LANG
 OUT.mkdir(exist_ok=True)
 
+import estadisticas  # noqa: E402
+estadisticas.PATH = Path(tempfile.gettempdir()) / "isla-test-estadisticas.json"  # no tocar las tuyas
+estadisticas.PATH.unlink(missing_ok=True)
 isl = island.Island()
 isl.root.withdraw()
 isl.check_privacy = lambda: None  # sin leer el registro real
@@ -64,7 +67,13 @@ def card(**kw):
 big = island.BIG
 check("cerrada", "small", island.SMALL)
 check("abierta", "big", big)
-for combo in (["claude", "music", "today", "system"], ["today", "music"], ["system"], ["music", "claude", "today"]):
+isl.stats.add("claude_secs", 4380)
+isl.stats.add("focus", 3)
+for k in range(12):
+    isl.stats.song(f"canción {k}")
+check("tarjeta-resumen", "card", island.NOTIF, isl.summary_card)
+isl.card = None
+for combo in (["stats", "music"], ["claude", "music", "today", "system"], ["today", "music"], ["system"], ["music", "claude", "today"]):
     isl.cfg["widgets"] = combo
     check("widgets-" + "-".join(combo), "big", isl.big_size())
 isl.cfg["widgets"] = ["claude", "music"]

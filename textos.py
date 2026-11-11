@@ -113,6 +113,13 @@ EN = {
     " · {n} archivo(s)": " · {n} file(s)", "En la terminal": "In the terminal",
     "Respondí desde la isla dinámica: «{answer}». Sigue con esa respuesta, sin volver a preguntar.":
         "I answered from the island: \"{answer}\". Continue with that answer without asking again.",
+    # estadísticas y dictado
+    "Tu día: Claude, enfoque y música": "Your day: Claude, focus and music", "Resumen de hoy": "Today's summary",
+    "{h} h {m} min": "{h} h {m} min", "{m} min": "{m} min",
+    "Claude trabajó {claude} · {focus} enfoque(s) · {songs} canción(es)":
+        "Claude worked {claude} · {focus} focus round(s) · {songs} song(s)",
+    "Claude trabajó": "Claude worked", "Enfoques": "Focus rounds", "Canciones": "Songs",
+    "Dictar": "Dictate", "Dictarle a Claude (voz)": "Dictate to Claude (voice)",
     # menú y bandeja
     "Mostrar / ocultar": "Show / hide", "Ajustes…": "Settings…", "Salir": "Quit", "Ocultar": "Hide",
     "Empezar enfoque (25 + 5 min)": "Start focus (25 + 5 min)", "Terminar enfoque": "Stop focus",

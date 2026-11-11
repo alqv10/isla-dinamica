@@ -157,6 +157,10 @@ class ChatPanel:
         self.text.pack(side="top", fill="both", expand=True)
         self.entry = tk.Entry(bottom, bg=FIELD, fg=FG, insertbackground=FG, relief="flat", bd=0, font=("Segoe UI", 11))
         self.entry.pack(side="left", fill="x", expand=True, padx=round(14 * S), pady=round(10 * S))
+        mic = tk.Label(bottom, text=_("Dictar"), bg=LINE, fg=FG, font=("Segoe UI", 9, "bold"), cursor="hand2",
+                       padx=round(10 * S), pady=round(3 * S))
+        mic.pack(side="right", padx=(0, round(10 * S)))
+        mic.bind("<Button-1>", lambda e: self.dictate())
         tk.Label(bottom, text=_("Enter envía · Ctrl+V pega una captura · Esc cierra"), bg=FIELD, fg=DIM,
                  font=("Segoe UI", 8)).pack(side="right", padx=round(10 * S))
         self.entry.bind("<Return>", lambda e: self.send())
@@ -227,6 +231,18 @@ class ChatPanel:
         self.text.mark_gravity("answer", "left")
         self.conv.ask(text, self.attached)
         self.clear_attachments()
+
+    def dictate(self):
+        """Dictado por voz con el de Windows (Win+H): escribe lo que dices en el campo del chat."""
+        self.entry.focus_force()
+        u = ctypes.windll.user32
+
+        def press():
+            u.keybd_event(0x5B, 0, 0, 0)  # Win
+            u.keybd_event(0x48, 0, 0, 0)  # H
+            u.keybd_event(0x48, 0, 2, 0)
+            u.keybd_event(0x5B, 0, 2, 0)
+        self.top.after(150, press)  # con el foco ya en el campo
 
     def new(self):
         """Conversación nueva: Claude olvida lo anterior."""

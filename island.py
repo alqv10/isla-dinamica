@@ -44,7 +44,7 @@ DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications"
             "screenshots": True, "clipboard_text": False, "privacy": True,
             "widgets": ["claude", "music"],
             # atajos: en teclados en español Ctrl+Alt = AltGr, por eso solo uno viene puesto
-            "hotkeys": {"toggle": "Ctrl+Alt+I", "focus": "", "play": "", "settings": "", "chat": ""},
+            "hotkeys": {"toggle": "Ctrl+Alt+I", "focus": "", "play": "", "settings": "", "chat": "", "dictate": ""},
             "language": "auto",  # "auto" (el de Windows), "es" o "en"
             "reminders": [],  # [{"at": segundos epoch, "text": "sacar la ropa"}]
             "tour_done": False}  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
@@ -98,7 +98,7 @@ def start_tray(toggle, quit_, settings, chat):
 
 HOTKEY_ACTIONS = [("toggle", "Mostrar u ocultar la isla"), ("focus", "Empezar o terminar el enfoque"),
                   ("play", "Pausar o seguir la música"), ("settings", "Abrir los ajustes"),
-                  ("chat", "Preguntarle a Claude")]
+                  ("chat", "Preguntarle a Claude"), ("dictate", "Dictarle a Claude (voz)")]
 MODS = {"Ctrl": 0x2, "Alt": 0x1, "Shift": 0x4, "Win": 0x8}
 KEYS = {**{chr(c): c for c in range(ord("A"), ord("Z") + 1)}, **{str(d): ord(str(d)) for d in range(10)},
         **{f"F{n}": 0x6F + n for n in range(1, 13)}, "Espacio": 0x20, "Inicio": 0x24, "Fin": 0x23,
@@ -209,6 +209,9 @@ class Island:
         self.drag = None  # (x inicial, y inicial) de un arrastre sobre la música
         self.ac = self.drives = None  # cargador y memorias USB (None = todavía no se miró)
         self.focus = Focus()
+        import estadisticas
+        self.stats = estadisticas.Stats()
+        self.song_key, self.song_since = None, 0.0  # canción sonando y desde cuándo (cuenta tras 30 s)
         self.clip_seq, self.clip_at = clipboard_seq(), 0.0  # lo que ya estaba copiado no se muestra
         self.inuse = {}  # micrófono/cámara en uso: {"microphone": {"Discord"}, …}
         self.poke_t = self.celebrate_t = -9.0  # cariño (clic en el personaje) y festejo (Claude terminó)
@@ -328,6 +331,7 @@ class Island:
         self.claude.enabled = getattr(self, "shown", True) and not self.companion  # compañero: Claude va a la terminal
         self.notes.enabled = self.cfg["notifications"]
         self.claude.reply_enabled = self.cfg["reply"]
+        self.claude.on_stop = lambda secs: (self.stats.add("claude_secs", round(secs)), self.stats.add("claude_turns"))
         self.weather.enabled, self.calendar.enabled = self.cfg["weather"], self.cfg["calendar"]
         self.updater.enabled = self.cfg["updates"]
         self.accent = self.cfg["accent"]
@@ -419,6 +423,7 @@ class Island:
                           command=lambda: set_startup(self.vars["startup"].get()))
         check(m, "updates", _("Buscar actualizaciones"))
         m.add_separator()
+        m.add_command(label=_("Resumen de hoy"), command=self.summary_card)
         m.add_command(label=_("Ver el tour otra vez"), command=self.start_tour)
         m.add_command(label=_("Ver registro de errores"), command=self.open_log)
         m.add_command(label=_("Ocultar"), accelerator=self.cfg["hotkeys"].get("toggle", ""), command=self.toggle)
@@ -482,6 +487,9 @@ class Island:
             self.open_settings()
         elif action == "chat":
             self.open_chat()
+        elif action == "dictate":
+            self.open_chat()
+            self.chat.dictate()
 
     def set_hotkey(self, action, text):
         """Cambia un atajo; devuelve True si quedó registrado (False si otra app ya lo usa)."""
@@ -777,11 +785,49 @@ class Island:
                 self.card = card
         self.inuse = cur
 
+    # --- estadísticas del día ---
+
+    def count_song(self, now):
+        m = self.media
+        key = f"{m.title} · {m.artist}" if m.playing and m.title else None
+        if key != self.song_key:
+            self.song_key, self.song_since = key, now
+        elif key and now - self.song_since >= 30:  # escuchada al menos 30 s
+            self.stats.song(key)
+
+    def day_has_activity(self):
+        d = self.stats.today()
+        return d["claude_secs"] or d["focus"] or d["songs"]
+
+    def summary_text(self):
+        d = self.stats.today()
+        mins = d["claude_secs"] // 60
+        claude = _("{h} h {m} min", h=mins // 60, m=mins % 60) if mins >= 60 else _("{m} min", m=mins)
+        return _("Claude trabajó {claude} · {focus} enfoque(s) · {songs} canción(es)", claude=claude,
+                 focus=d["focus"], songs=len(d["songs"]))
+
+    def summary_card(self):
+        self.card = {"kind": "summary", "icon": "focus", "title": _("Resumen de hoy"), "body": self.summary_text(),
+                     "until": time.time() + 12}
+
+    def draw_stats(self, w, a):
+        """Tu día: tres números grandes con su etiqueta."""
+        p, d = self.p, self.stats.today()
+        mins = d["claude_secs"] // 60
+        items = [(f"{mins // 60}:{mins % 60:02d}" if mins >= 60 else f"{mins}′", _("Claude trabajó")),
+                 (str(d["focus"]), _("Enfoques")), (str(len(d["songs"])), _("Canciones"))]
+        col_w = (w - 44) / len(items)
+        for i, (big, label) in enumerate(items):
+            x = 22 + i * col_w
+            p.text(x, 24, big, "big", self.accent if i == 0 else WHITE, a)
+            p.text(x, 46, label, "small", GREY, a)
+
     def focus_card(self, phase):
         minutes = Focus.MINUTES[phase]
         if phase == "work":
             title, body = _("A concentrarse"), _("{minutes} minutos · ronda {round}", minutes=minutes, round=self.focus.round)
         else:
+            self.stats.add("focus")
             title = _("¡Descanso largo!") if phase == "long" else _("¡Descanso!")
             body = _("{minutes} minutos · terminaste la ronda {round}", minutes=minutes, round=self.focus.round)
         self.card = {"kind": "focus", "icon": "focus", "title": title, "body": body, "until": time.time() + 8,
@@ -861,6 +907,11 @@ class Island:
             self.check_devices(now)
             self.check_privacy()
             self.check_reminders(now)
+            self.count_song(now)
+            if datetime.now().strftime("%H:%M") >= "21:30" and not self.stats.today()["summary_shown"] \
+                    and self.day_has_activity():
+                self.stats.mark("summary_shown")
+                self.summary_card()
             self.idle = idle_seconds()
         left = self.timer.left()
         if left is not None and left <= 0:
@@ -1412,7 +1463,7 @@ class Island:
                 c.translate(0, top)
                 self.hit_dy = top
                 {"claude": lambda: self.draw_claude(w, now, mood, a), "today": lambda: self.draw_today(w, a),
-                 "system": lambda: self.draw_system(w, a)}[b]()
+                 "system": lambda: self.draw_system(w, a), "stats": lambda: self.draw_stats(w, a)}[b]()
                 self.hit_dy = 0
             c.restore()
 

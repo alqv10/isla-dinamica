@@ -71,6 +71,7 @@ class ClaudeCode:
         self.reply_enabled = True
         self.reply = None  # oferta de "Responder" tras el último Stop (ver wait_reply)
         self.questions = []  # preguntas de Claude (AskUserQuestion) esperando respuesta en la isla
+        self.on_stop = None  # se llama con los segundos que trabajó Claude en cada turno (estadísticas)
         self.lock = threading.Lock()
 
     def current(self):
@@ -216,6 +217,8 @@ class ClaudeCode:
             elif name == "Stop":
                 s.update(status=_("Listo ✓"), detail=[(first_line(ev.get("last_assistant_message")), GREY)],
                          mood="happy", took=time.time() - s["since"] if s["since"] else None, since=None)
+                if s["took"] and self.on_stop:
+                    self.on_stop(s["took"])
                 self.flash_until = time.time() + 5
         if name in ("PostToolUse", "Stop", "UserPromptSubmit", "SessionEnd"):
             self.drop_perms(sid)
