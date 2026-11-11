@@ -49,7 +49,7 @@ pythonw island.py
 
 ![Personajes](docs/personajes.png)
 
-Robot, Chispa, Burbuja o Gato, en seis colores. Respiran, parpadean, te siguen con la mirada, saltan si les haces clic o cuando Claude termina, y se duermen si dejas la PC un rato. En el modo **Solo compañero** no hay tarjeta de Claude Code: el personaje te acompaña y reacciona a la música, las notificaciones y la hora.
+Robot, Chispa, Burbuja, Gato, Zorro o Pulpo, en seis colores, con accesorios que se ganan usando la isla (auriculares con música, lentes en el enfoque, gorro de fiesta cuando Claude termina). Respiran, parpadean, te siguen con la mirada, saltan si les haces clic o cuando Claude termina, y se duermen si dejas la PC un rato. En el modo **Solo compañero** no hay tarjeta de Claude Code: el personaje te acompaña y reacciona a la música, las notificaciones y la hora.
 
 **Además**
 - Música (Spotify, navegador…) con carátula, barra de progreso y botones animados.
@@ -63,6 +63,9 @@ Robot, Chispa, Burbuja o Gato, en seis colores. Respiran, parpadean, te siguen c
 - Reloj, fecha, batería en laptops; CPU y RAM en PCs de escritorio.
 - Temporizador: rueda del mouse = minutos, clic = iniciar/parar.
 - Color de acento, modo translúcido y tres tamaños. Nítida en pantallas con escala 125–200 %.
+- Animaciones: confeti cuando Claude termina, ondas al tocar botones y transiciones suaves entre tarjetas.
+- Modo noche (de 22 a 7 la isla se oscurece) y recordatorio para descansar la vista cada 20 minutos (20-20-20).
+- Galería con tus últimas 8 capturas: cópialas otra vez, ábrelas o pregúntale a Claude por ellas.
 - Fondos: negro, vidrio, aurora (colores que se mueven) o con el color de la carátula que suena.
 - Elige qué bloques se ven en la isla abierta (Claude Code, música, hoy, sistema, tu día) y en qué orden.
 - "Tu día": cuánto trabajó Claude, rondas de enfoque y canciones; resumen a las 21:30. Se guarda solo en tu PC.

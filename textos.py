@@ -120,6 +120,20 @@ EN = {
         "Claude worked {claude} · {focus} focus round(s) · {songs} song(s)",
     "Claude trabajó": "Claude worked", "Enfoques": "Focus rounds", "Canciones": "Songs",
     "Dictar": "Dictate", "Dictarle a Claude (voz)": "Dictate to Claude (voice)",
+    # personajes nuevos y accesorios
+    "Zorro": "Fox", "Pulpo": "Octopus", "Auriculares": "Headphones", "Lentes": "Glasses",
+    "Gorro de fiesta": "Party hat", "¡Nuevo accesorio: {name}!": "New accessory: {name}!",
+    "Tu personaje ya lo puede usar.": "Your character can wear it now.",
+    "Accesorios del personaje": "Character accessories",
+    # noche, vista y galería
+    "Descansa la vista": "Rest your eyes", "Mira algo a unos 6 metros durante 20 segundos.":
+        "Look at something about 20 feet away for 20 seconds.", "Ahora no": "Not now", "Empezar": "Start",
+    "Mira lejos… parpadea despacio.": "Look far away… blink slowly.", "¡Bien!": "Well done!",
+    "Tus ojos te lo agradecen.": "Your eyes thank you.", "Modo noche (22 a 7 h)": "Night mode (10 pm to 7 am)",
+    "Recordar descansar la vista (20-20-20)": "Remind me to rest my eyes (20-20-20)",
+    "Capturas recientes": "Recent screenshots",
+    "Las capturas que copies (Win+Shift+S) aparecerán aquí.": "Screenshots you copy (Win+Shift+S) will show up here.",
+    "Captura del {when}": "Screenshot from {when}", "Copiada: pégala con Ctrl+V": "Copied: paste it with Ctrl+V",
     # menú y bandeja
     "Mostrar / ocultar": "Show / hide", "Ajustes…": "Settings…", "Salir": "Quit", "Ocultar": "Hide",
     "Empezar enfoque (25 + 5 min)": "Start focus (25 + 5 min)", "Terminar enfoque": "Stop focus",

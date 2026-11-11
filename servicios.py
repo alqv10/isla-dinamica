@@ -28,7 +28,7 @@ from sistema import clamp
 from claude import first_line
 
 
-VERSION = "1.6.0"
+VERSION = "1.7.0"
 
 
 REPO = "alqv10/isla-dinamica"

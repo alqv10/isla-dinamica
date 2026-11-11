@@ -77,6 +77,9 @@ for combo in (["stats", "music"], ["claude", "music", "today", "system"], ["toda
     isl.cfg["widgets"] = combo
     check("widgets-" + "-".join(combo), "big", isl.big_size())
 isl.cfg["widgets"] = ["claude", "music"]
+t0 = time.time()  # animaciones: confeti y onda congelados a mitad de camino
+check("confeti", "small", island.SMALL, lambda: (isl.spawn_particles(t0 - 0.35), isl.ripples.append((120, 17, t0 - 0.15))))
+isl.particles, isl.ripples = [], []
 buf_art = io.BytesIO()
 from PIL import Image as _Image  # noqa: E402
 _Image.new("RGB", (64, 64), (230, 120, 40)).save(buf_art, "PNG")  # carátula naranja: el fondo "Carátula" la usa
@@ -131,6 +134,29 @@ for step in range(len(island.TOUR)):
     check(f"tour-{step + 1}", "card", (520, 92), lambda step=step: (setattr(isl, "tour", step), isl.show_tour_step(),
                                                                     setattr(isl, "tour", None)))
 isl.card = None
+isl.gallery_dir = Path(tempfile.gettempdir()) / "isla-test-galeria"  # no tocar la galería real
+isl.gallery_dir.mkdir(exist_ok=True)
+for f in isl.gallery_dir.glob("*.png"):
+    f.unlink()
+isl.cfg["widgets"] = ["gallery", "music"]
+check("galeria-vacia", "big", isl.big_size())
+for i, col in enumerate([(220, 80, 60), (60, 140, 220), (90, 200, 120)]):
+    b = io.BytesIO()
+    Image.new("RGB", (160, 90), col).save(b, "PNG")
+    (isl.gallery_dir / f"cap-20261110-1{i}0000.png").write_bytes(b.getvalue())
+check("galeria", "big", isl.big_size())
+check("tarjeta-galeria", "card", island.NOTIF, lambda: isl.gallery_card(isl.gallery()[0]))
+isl.cfg["widgets"] = ["claude", "music"]
+check("tarjeta-ojos", "card", island.NOTIF, lambda: (setattr(isl, "card", None), setattr(isl, "active_secs", 99999),
+                                                      setattr(isl, "idle", 0), isl.check_eye_rest()))
+check("tarjeta-ojos-cuenta", "card", island.NOTIF, isl.start_eye_rest)
+isl.card = None
+isl.night = lambda: True
+check("noche", "big", big)
+isl.night = lambda: False
+isl.cfg["unlocked"] = ["glasses", "hat"]
+m.playing = True
+check("accesorio-auriculares", "small", island.SMALL)
 isl.focus.start()
 check("cerrada-enfoque", "small", island.SMALL)
 isl.focus.stop()

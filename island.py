@@ -47,7 +47,10 @@ DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications"
             "hotkeys": {"toggle": "Ctrl+Alt+I", "focus": "", "play": "", "settings": "", "chat": "", "dictate": ""},
             "language": "auto",  # "auto" (el de Windows), "es" o "en"
             "reminders": [],  # [{"at": segundos epoch, "text": "sacar la ropa"}]
-            "tour_done": False}  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
+            "tour_done": False,
+            "accessories": True, "unlocked": [],
+            "night": True,  # de 22 a 7 la isla se oscurece y se pone más cálida
+            "eye_rest": True}  # regla 20-20-20: cada 20 min de uso, mirar lejos 20 s  # accesorios que se ganan con el uso (ver dibujo.ACCESSORIES)  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
 
 
 STARTUP = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/Isla dinamica.lnk"
@@ -216,6 +219,11 @@ class Island:
         self.inuse = {}  # micrófono/cámara en uso: {"microphone": {"Discord"}, …}
         self.poke_t = self.celebrate_t = -9.0  # cariño (clic en el personaje) y festejo (Claude terminó)
         self.last_flash, self.idle, self.ptr = 0.0, 0.0, (0, 0)
+        self.active_secs = 0  # segundos seguidos usando la PC (para el descanso de la vista)
+        self.gallery_dir = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "IslaDinamica" / "capturas"
+        self.thumbs = {}  # archivo -> superficie de la miniatura
+        self.particles, self.ripples = [], []  # confeti (Claude terminó) y ondas (clic en un botón)
+        self.enter_t, self.last_char = -9.0, (24, 17)  # cuándo se abrió la isla; dónde está el personaje
         self.drag_dx = self.drag_vis = 0.0  # cuánto se arrastró / cuánto se ve corrido el contenido
         self.hov = {"play": 0.0, "prev": 0.0, "next": 0.0}  # 0..1: cuánto está "encendido" cada botón
         self.pressed = {}  # botón -> momento del último clic
@@ -272,7 +280,13 @@ class Island:
 
     def char(self, p, x, y, size, mood, now, a=1.0):
         """Dibuja el personaje elegido: mira hacia el mouse, salta cuando le haces clic o Claude termina,
-        muestra el anillo del enfoque y "z z" si estás hace rato sin usar la PC."""
+        entra con un rebote al abrir la isla, muestra el anillo del enfoque y "z z" si estás hace rato sin
+        usar la PC."""
+        if size >= 22:
+            self.last_char = (x, y + self.hit_dy)  # de acá sale el confeti
+        t = now - self.enter_t
+        if self.mode == "big" and t < 0.9:
+            size *= 1 - 0.32 * math.exp(-t * 6) * math.cos(t * 13)
         t = now - max(self.poke_t, self.celebrate_t)
         hop = math.sin(t * math.pi * 2.5) ** 2 * math.exp(-t * 2.2) if 0 <= t < 1.6 else 0.0
         if 0 <= now - self.poke_t < 1.2:
@@ -295,11 +309,40 @@ class Island:
             p.c.stroke()
         character(p, self.cfg["character"], x, y, size, mood, now, a, self.cfg["body"],
                   look=(dx / dist * k, dy / dist * k), hop=hop)
+        wear = self.wearing(now) if self.cfg["accessories"] and size >= 18 else None
+        if wear:
+            accessory(p, wear, self.cfg["character"], x, y - hop * size * 0.3, size, now, a, self.accent)
         if mood == "sleep" and self.idle > 300:  # z z flotando
             for i in range(2):
                 ph = (now * 0.5 + i * 0.5) % 1
                 p.text(x + size * (0.45 + ph * 0.3), y - size * (0.3 + ph * 0.5), "z", "tiny" if i else "small",
                        GREY, a * (1 - ph))
+
+    def wearing(self, now):
+        """El accesorio que corresponde ahora (si ya lo ganaste): gorro al festejar, lentes en el enfoque,
+        auriculares con música."""
+        have = self.cfg["unlocked"]
+        if "hat" in have and 0 <= now - self.celebrate_t < 3:
+            return "hat"
+        if "glasses" in have and self.focus.phase == "work":
+            return "glasses"
+        if self.media.playing:
+            return "phones"  # este viene de entrada
+        return None
+
+    def check_unlocks(self):
+        """Gana accesorios según el uso total (todos los días): avisa con una tarjeta."""
+        totals = {"focus": 0, "claude_turns": 0}
+        for day in self.stats.data.values():
+            for k in totals:
+                totals[k] += day.get(k, 0)
+        for which, need in (("glasses", totals["focus"]), ("hat", totals["claude_turns"])):
+            name, goal = ACCESSORIES[which]
+            if which not in self.cfg["unlocked"] and need >= goal:
+                self.set("unlocked", self.cfg["unlocked"] + [which])
+                self.card = {"kind": "unlock", "icon": "tour", "title": _("¡Nuevo accesorio: {name}!", name=_(name)),
+                             "body": _("Tu personaje ya lo puede usar."), "until": time.time() + 8}
+                self.celebrate_t = time.time()
 
     def poke(self):
         self.poke_t = time.time()
@@ -671,6 +714,7 @@ class Island:
         x, y = self.local(e)
         for x1, y1, x2, y2, action, name in reversed(self.hits):
             if x1 <= x <= x2 and y1 <= y <= y2:
+                self.ripples.append((x, y, time.time()))
                 if name:
                     self.pressed[name] = time.time()  # dispara la animación de "apretar"
                 return action()
@@ -741,6 +785,7 @@ class Island:
         buf = io.BytesIO()
         im.save(buf, "PNG")
         data = buf.getvalue()
+        self.save_to_gallery(data)
         card = {"kind": "shot", "icon": "clip", "title": _("Captura copiada"),
                 "body": _("{w} × {h} · pégala con Ctrl+V", w=im.width, h=im.height), "until": time.time() + 7,
                 "thumb": art_surface(data, round(40 * self.S * 2))}
@@ -821,6 +866,102 @@ class Island:
             x = 22 + i * col_w
             p.text(x, 24, big, "big", self.accent if i == 0 else WHITE, a)
             p.text(x, 46, label, "small", GREY, a)
+
+    # --- noche y descanso de la vista ---
+
+    def night(self):
+        hour = datetime.now().hour
+        return self.cfg["night"] and (hour >= 22 or hour < 7)
+
+    def check_eye_rest(self):
+        if not self.cfg["eye_rest"]:
+            return
+        if self.idle >= 300:
+            self.active_secs = 0  # te fuiste un rato: la vista ya descansó
+        elif self.idle < 60:
+            self.active_secs += 1
+        if self.active_secs >= 20 * 60 and not self.hidden and not self.card and self.tour is None:
+            self.active_secs = 0
+            self.card = {"kind": "eyes", "icon": "eyes", "title": _("Descansa la vista"),
+                         "body": _("Mira algo a unos 6 metros durante 20 segundos."), "until": time.time() + 30,
+                         "buttons": [(_("Ahora no"), lambda: self.card.update(until=0), False),
+                                     (_("Empezar"), self.start_eye_rest, True)]}
+
+    def start_eye_rest(self):
+        card = self.card
+        ends = time.time() + 20
+        card.update(until=ends + 2.5, buttons=[], countdown=ends,
+                    body=_("Mira lejos… parpadea despacio."), action=None)
+
+    # --- galería de capturas ---
+
+    def save_to_gallery(self, png):
+        try:
+            self.gallery_dir.mkdir(parents=True, exist_ok=True)
+            (self.gallery_dir / f"cap-{datetime.now():%Y%m%d-%H%M%S}.png").write_bytes(png)
+            for old in sorted(self.gallery_dir.glob("cap-*.png"))[:-8]:  # solo las últimas 8
+                old.unlink()
+                self.thumbs.pop(old, None)
+        except OSError:
+            pass
+
+    def gallery(self):
+        try:
+            return sorted(self.gallery_dir.glob("cap-*.png"), reverse=True)[:8]
+        except OSError:
+            return []
+
+    def draw_gallery(self, w, a):
+        p, c = self.p, self.p.c
+        files = self.gallery()
+        p.text(22, 14, _("Capturas recientes"), "small", GREY, a)
+        if not files:
+            p.text(22, 46, _("Las capturas que copies (Win+Shift+S) aparecerán aquí."), "small", "#5a5a60", a)
+            return
+        size, x = 52, 22
+        for f in files:
+            if x + size > w - 22:
+                break
+            if f not in self.thumbs:
+                try:
+                    self.thumbs[f] = art_surface(f.read_bytes(), round(size * self.S * 2))[0]
+                except OSError:
+                    continue
+            surf = self.thumbs[f]
+            c.save()
+            p.rrect_path(x, 26, x + size, 26 + size, 10)
+            c.clip()
+            c.translate(x, 26)
+            c.scale(size / surf.get_width(), size / surf.get_width())
+            c.set_source_surface(surf, 0, 0)
+            c.get_source().set_filter(cairo.FILTER_GOOD)
+            c.paint_with_alpha(clamp(a))
+            c.restore()
+            self.hit(x, 26, x + size, 26 + size, lambda f=f: self.gallery_card(f))
+            x += size + 8
+
+    def gallery_card(self, path):
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return
+        from PIL import Image as PILImage
+        im = PILImage.open(io.BytesIO(data))
+        card = {"kind": "shot", "icon": "clip", "title": _("Captura del {when}", when=datetime.strptime(
+            path.stem[4:], "%Y%m%d-%H%M%S").strftime("%d/%m %H:%M")), "body": f"{im.width} × {im.height}",
+                "until": time.time() + 10, "thumb": art_surface(data, round(40 * self.S * 2))}
+
+        def copy():
+            set_clipboard_image(data)
+            self.clip_seq = clipboard_seq()  # no mostrar "Captura copiada" por esto
+            card.update(body=_("Copiada: pégala con Ctrl+V"), until=time.time() + 3, buttons=[])
+
+        def ask():
+            card["until"] = 0
+            self.open_chat(_("¿Qué ves en esta captura?"), PILImage.open(io.BytesIO(data)))
+        card["buttons"] = [(_("Preguntar"), ask, False), (_("Abrir"), lambda: os.startfile(path), False),
+                           (_("Copiar"), copy, True)]
+        self.card = card
 
     def focus_card(self, phase):
         minutes = Focus.MINUTES[phase]
@@ -907,6 +1048,8 @@ class Island:
             self.check_devices(now)
             self.check_privacy()
             self.check_reminders(now)
+            self.check_unlocks()
+            self.check_eye_rest()
             self.count_song(now)
             if datetime.now().strftime("%H:%M") >= "21:30" and not self.stats.today()["summary_shown"] \
                     and self.day_has_activity():
@@ -929,6 +1072,7 @@ class Island:
             self.last_flash = self.claude.flash_until
             if not self.companion:
                 self.celebrate_t = now
+                self.spawn_particles(now)
         px, py = root.winfo_pointerxy()
         self.ptr = (px, py)
         lx, ly = (px - self.X) / S - self.left_edge(), (py - self.Y) / S
@@ -964,6 +1108,8 @@ class Island:
             mode = "big"
         else:
             mode = "small"
+        if mode == "big" and self.mode != "big":
+            self.enter_t = now
         self.mode = mode
         big = self.big_size()
         card_size = (520, 92) if card and card["kind"] == "tour" else NOTIF  # el tour lleva más texto
@@ -999,6 +1145,7 @@ class Island:
                   or now - max(self.pressed.values(), default=0) < 0.7  # botón rebotando
                   or self.drag or abs(self.drag_vis) > 0.5  # arrastrando la música
                   or now - max(self.poke_t, self.celebrate_t) < 1.6  # el personaje saltando
+                  or self.particles or self.ripples or now - self.enter_t < 0.9
                   or (mode == "big" and (under or any(0.01 < v < 0.99 for v in self.hov.values())
                                          or abs(self.media.playing - self.morph) > 0.01
                                          or abs((1.0 if self.media.playing else 0.9) - self.art_k) > 0.002)))
@@ -1037,6 +1184,8 @@ class Island:
         c.save()
         c.clip()  # el contenido no se sale de la isla mientras se anima
         near = clamp(1 - abs(w - target[0]) / 100 - abs(h - target[1]) / 40)  # fundido al llegar
+        if mode not in ("big", "small"):
+            c.translate(0, (1 - near) * 10)  # el contenido nuevo entra subiendo un poco
         if mode == "perm":
             self.draw_perm(w, h, now, mood, near)
         elif mode == "chat":
@@ -1057,9 +1206,50 @@ class Island:
                 self.draw_blocks(w, now, mood, a)
         else:
             self.draw_small(w, h, now, mood, clamp(1 - (h - SMALL[1]) / 30) ** 2)
+        self.draw_ripples(now)
+        if self.night():  # de noche: más oscura y cálida
+            c.set_source_rgba(0.05, 0.02, 0, 0.3)
+            c.paint()
         c.restore()
+        self.draw_particles(now)
         for i, cap in enumerate(c for c in ("microphone", "webcam") if self.inuse.get(c)):
             p.circle(w + 10 + i * 10, 10, 3.5, PRIVACY[cap], 1)
+
+    def spawn_particles(self, now):
+        """Confeti que sale del personaje cuando Claude termina."""
+        import random
+        x, y = self.last_char
+        colors = [self.accent, MOODS["curious"], MOODS["love"], "#ffd166", WHITE]
+        for _i in range(22):
+            ang = random.uniform(-math.pi * 0.95, -math.pi * 0.05)  # hacia arriba y a los costados
+            speed = random.uniform(70, 170)
+            self.particles.append([x, y, math.cos(ang) * speed, math.sin(ang) * speed * 0.6 + 40, now,
+                                   random.choice(colors), random.uniform(2.2, 4.0)])
+
+    def draw_particles(self, now):
+        p, alive = self.p, []
+        for part in self.particles:
+            x, y, vx, vy, born, col, size = part
+            t = now - born
+            if t > 1.2:
+                continue
+            alive.append(part)
+            px, py = x + vx * t, y + vy * t + 160 * t * t  # con gravedad
+            p.circle(px, py, size * (1 - t / 1.4), col, 1 - t / 1.2)
+        self.particles = alive
+
+    def draw_ripples(self, now):
+        c, alive = self.p.c, []
+        for x, y, born in self.ripples:
+            t = (now - born) / 0.45
+            if t >= 1:
+                continue
+            alive.append((x, y, born))
+            c.new_sub_path()
+            c.arc(x, y, 6 + 34 * t, 0, 2 * math.pi)
+            c.set_source_rgba(1, 1, 1, 0.28 * (1 - t))
+            c.fill()
+        self.ripples = alive
 
     def paint_background(self, w, h, now):
         """Sombra suave + el fondo elegido. Deja la silueta como camino actual (para recortar el contenido)."""
@@ -1264,6 +1454,24 @@ class Island:
             p.text(right - bw / 2, h / 2, label, "btn", "#000000" if primary else WHITE, a, anchor="center")
             self.hit(right - bw, 0, right, h, act)
             right -= bw + 8
+        if card.get("countdown"):  # descanso de la vista: anillo y segundos que faltan
+            left = card["countdown"] - time.time()
+            cx, cy = w - 44, h / 2
+            c.new_sub_path()
+            c.arc(cx, cy, 15, 0, 2 * math.pi)
+            c.set_line_width(3)
+            p.rgba("#2a2a30", a)
+            c.stroke()
+            if left > 0:
+                c.new_sub_path()
+                c.arc(cx, cy, 15, -math.pi / 2, -math.pi / 2 + 2 * math.pi * left / 20)
+                p.rgba(self.accent, a)
+                c.stroke()
+                p.text(cx, cy, str(math.ceil(left)), "btn", WHITE, a, anchor="center")
+            else:
+                title, body = _("¡Bien!"), _("Tus ojos te lo agradecen.")
+                p.text(cx, cy, "✓", "sym", self.accent, a, anchor="center")
+            right = cx - 26
         if not buttons:  # clic = la acción de la tarjeta (abrir el USB…) y se cierra
             act = card.get("action")
             self.hit(0, 0, w, h, lambda: (act and act(), card.update(until=0)))
@@ -1307,6 +1515,10 @@ class Island:
             c.set_line_width(2)
             p.rgba(col, a)
             c.stroke()
+        elif kind == "eyes":  # dos ojos
+            for dx in (-6, 6):
+                p.oval(cx + dx - 5, cy - 6, cx + dx + 5, cy + 6, WHITE, a)
+                p.circle(cx + dx + 1, cy + 1, 2.4, INK, a)
         elif kind == "bell":  # campana
             c.new_sub_path()
             c.arc(cx, cy - 2, 8, math.pi, 2 * math.pi)
@@ -1463,7 +1675,8 @@ class Island:
                 c.translate(0, top)
                 self.hit_dy = top
                 {"claude": lambda: self.draw_claude(w, now, mood, a), "today": lambda: self.draw_today(w, a),
-                 "system": lambda: self.draw_system(w, a), "stats": lambda: self.draw_stats(w, a)}[b]()
+                 "system": lambda: self.draw_system(w, a), "stats": lambda: self.draw_stats(w, a),
+                 "gallery": lambda: self.draw_gallery(w, a)}[b]()
                 self.hit_dy = 0
             c.restore()
 

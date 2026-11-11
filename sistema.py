@@ -1,5 +1,6 @@
 """Lo que la isla le pregunta a Windows: batería, CPU, pantallas, ventanas, portapapeles, micrófono…"""
 import ctypes
+import io
 import os
 from ctypes import wintypes
 from pathlib import Path
@@ -237,6 +238,25 @@ def clipboard_text():
         finally:
             k.GlobalUnlock(h)
     finally:
+        u.CloseClipboard()
+
+
+def set_clipboard_image(png):
+    """Copia una imagen (bytes PNG) al portapapeles de Windows (formato CF_DIB)."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.open(io.BytesIO(png)).convert("RGB").save(buf, "BMP")
+    dib = buf.getvalue()[14:]  # sin la cabecera del archivo BMP
+    u, k = ctypes.windll.user32, ctypes.windll.kernel32
+    k.GlobalAlloc.restype = k.GlobalLock.restype = ctypes.c_void_p
+    k.GlobalLock.argtypes = k.GlobalUnlock.argtypes = [ctypes.c_void_p]
+    u.SetClipboardData.argtypes = [ctypes.c_uint, ctypes.c_void_p]
+    h = k.GlobalAlloc(0x0002, len(dib))  # GMEM_MOVEABLE
+    ctypes.memmove(k.GlobalLock(h), dib, len(dib))
+    k.GlobalUnlock(h)
+    if u.OpenClipboard(None):
+        u.EmptyClipboard()
+        u.SetClipboardData(8, h)  # CF_DIB: desde acá el portapapeles es dueño de la memoria
         u.CloseClipboard()
 
 

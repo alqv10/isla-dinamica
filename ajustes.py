@@ -43,9 +43,14 @@ class Settings:
         except (AttributeError, OSError):
             pass
 
-        tk.Label(t, text=_("Ajustes"), font=("Segoe UI", 18, "bold"), bg=BG, fg=FG).pack(anchor="w", pady=(round(16 * k), 0), **pad)
-        tk.Label(t, text=_("Los cambios se ven al instante en la isla."), font=("Segoe UI", 9), bg=BG, fg=DIM).pack(anchor="w", **pad)
-        cols = tk.Frame(t, bg=BG)  # dos columnas: cómo se ve (izquierda) y qué hace (derecha)
+        # todo va dentro de un lienzo: si la pantalla es baja (laptops), se recorre con la rueda del mouse
+        self.canvas = tk.Canvas(t, bg=BG, highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        body = tk.Frame(self.canvas, bg=BG)
+        self.canvas.create_window(0, 0, window=body, anchor="nw")
+        tk.Label(body, text=_("Ajustes"), font=("Segoe UI", 18, "bold"), bg=BG, fg=FG).pack(anchor="w", pady=(round(16 * k), 0), **pad)
+        tk.Label(body, text=_("Los cambios se ven al instante en la isla."), font=("Segoe UI", 9), bg=BG, fg=DIM).pack(anchor="w", **pad)
+        cols = tk.Frame(body, bg=BG)  # dos columnas: cómo se ve (izquierda) y qué hace (derecha)
         cols.pack(fill="x")
         left, right = tk.Frame(cols, bg=BG), tk.Frame(cols, bg=BG)
         left.pack(side="left", anchor="n")
@@ -95,6 +100,11 @@ class Settings:
                            ("hide_fullscreen", "Ocultar con juegos y videos en pantalla completa"),
                            ("updates", "Buscar actualizaciones")]:
             self.switch(_(label), lambda key=key: self.cfg[key], lambda v, key=key: self.change(key, v))
+        self.switch(_("Modo noche (22 a 7 h)"), lambda: self.cfg["night"], lambda v: self.change("night", v))
+        self.switch(_("Recordar descansar la vista (20-20-20)"), lambda: self.cfg["eye_rest"],
+                    lambda v: self.change("eye_rest", v))
+        self.switch(_("Accesorios del personaje"), lambda: self.cfg["accessories"],
+                    lambda v: self.change("accessories", v))
         self.switch(_("Iniciar con Windows"), lambda: island.STARTUP.exists(), self.set_startup)
 
         self.section(_("Atajos de teclado"))
@@ -113,7 +123,7 @@ class Settings:
         self.refreshers.append(self.refresh_hotkeys)
         t.bind("<KeyPress>", self.key_pressed)
 
-        foot = tk.Frame(t, bg=BG)
+        foot = tk.Frame(body, bg=BG)
         foot.pack(fill="x", pady=(round(14 * k), round(16 * k)), **pad)
         tk.Label(foot, text=_("Versión {version} · código abierto", version=island.VERSION), font=("Segoe UI", 8), bg=BG, fg=DIM).pack(side="left")
         done = tk.Label(foot, text=_("Listo"), font=("Segoe UI", 10, "bold"), bg=isl.accent, fg="#000000",
@@ -122,9 +132,15 @@ class Settings:
         done.bind("<Button-1>", lambda e: self.close())
         self.done = done
         self.refresh()
-        t.update_idletasks()  # centrada en la pantalla de la isla, un poco abajo
-        m = isl.mon or {"x": 0, "y": 0, "w": t.winfo_screenwidth()}
-        t.geometry(f"+{m['x'] + (m['w'] - t.winfo_width()) // 2}+{m['y'] + round(150 * k)}")
+        body.update_idletasks()  # centrada en la pantalla de la isla; si no entra, más baja y con desplazamiento
+        m = isl.mon or {"x": 0, "y": 0, "w": t.winfo_screenwidth(), "h": t.winfo_screenheight()}
+        W, H = body.winfo_reqwidth(), body.winfo_reqheight()
+        room = m.get("h", t.winfo_screenheight()) - round(110 * k)  # deja lugar para la barra de tareas
+        self.canvas.config(width=W, height=min(H, room), scrollregion=(0, 0, W, H))
+        if H > room:
+            t.bind_all("<MouseWheel>", lambda e: self.canvas.yview_scroll(-1 if e.delta > 0 else 1, "units"))
+        top_y = m["y"] + max(round(20 * k), min(round(150 * k), (m.get("h", H) - min(H, room)) // 2 - round(30 * k)))
+        t.geometry(f"+{m['x'] + (m['w'] - W) // 2}+{top_y}")
         t.lift()
         t.focus_force()
 

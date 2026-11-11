@@ -212,7 +212,10 @@ class Paint:
         return x, x + wd
 
 
-CHARACTERS = [("Robot", "robot"), ("Chispa", "chispa"), ("Burbuja", "burbuja"), ("Gato", "gato")]
+CHARACTERS = [("Robot", "robot"), ("Chispa", "chispa"), ("Burbuja", "burbuja"), ("Gato", "gato"),
+              ("Zorro", "zorro"), ("Pulpo", "pulpo")]
+# accesorios: (nombre, cuándo se gana, cuándo lo usa)
+ACCESSORIES = {"phones": ("Auriculares", 0), "glasses": ("Lentes", 3), "hat": ("Gorro de fiesta", 10)}
 
 
 BODY_COLORS = [("Blanco", "#f2f2f2"), ("Coral", "#ff9478"), ("Lila", "#c9b8ff"), ("Celeste", "#8fd8ff"),
@@ -288,6 +291,38 @@ def character(p, kind, x, y, s, mood, now, a=1.0, body="#f2f2f2", look=(0, 0), h
         p.oval(x - w, y - h, x + w, y + h, body, a)
         p.oval(x - w * 0.55, y - h * 0.7, x - w * 0.15, y - h * 0.35, WHITE, a * 0.45)  # brillo
         eyes(p, x, y + s * 0.03, s * 0.14, e, mood, INK, lw, now, look)
+    elif kind == "zorro":
+        orange = body if body != "#f2f2f2" else "#ff9a4d"  # en blanco sería un zorro ártico: mejor naranja
+        for side in (-1, 1):  # orejas puntiagudas, con la punta oscura del color del ánimo
+            ox = x + side * s * 0.28
+            ear = [(ox - s * 0.15, y - s * 0.1), (ox + side * s * 0.08, y - s * 0.52), (ox + s * 0.15, y - s * 0.1)]
+            p.poly(ear, orange, a)
+            tip = ear[1]
+            p.poly([(tip[0] - side * s * 0.02 - s * 0.05, tip[1] + s * 0.14), tip,
+                    (tip[0] - side * s * 0.02 + s * 0.05, tip[1] + s * 0.14)], col, a * glow)
+        p.poly([(x - s * 0.48, y - s * 0.2), (x + s * 0.48, y - s * 0.2), (x + s * 0.2, y + s * 0.3), (x, y + s * 0.42),
+                (x - s * 0.2, y + s * 0.3)], orange, a)  # cabeza en forma de V
+        p.c.new_path()
+        p.oval(x - s * 0.48, y - s * 0.4, x + s * 0.48, y + s * 0.18, orange, a)
+        p.poly([(x - s * 0.34, y + s * 0.02), (x + s * 0.34, y + s * 0.02), (x + s * 0.12, y + s * 0.3), (x, y + s * 0.38),
+                (x - s * 0.12, y + s * 0.3)], "#fff6ec", a)  # hocico claro
+        eyes(p, x, y - s * 0.06, s * 0.17, e, mood, INK, lw, now, look)
+        p.circle(x, y + s * 0.3, s * 0.05, INK, a)
+    elif kind == "pulpo":
+        wave = math.sin(now * (6 if busy else 2.6))
+        for i in range(5):  # tentáculos que se mueven
+            tx = x + (i - 2) * s * 0.17
+            sway = wave * s * 0.05 * (1 if i % 2 else -1)
+            p.c.move_to(tx, y + s * 0.12)
+            p.c.curve_to(tx + sway, y + s * 0.3, tx - sway, y + s * 0.4, tx + sway * 1.5, y + s * 0.5)
+            p.c.set_line_width(s * 0.11)
+            p.c.set_line_cap(cairo.LINE_CAP_ROUND)
+            p.rgba(edge, a)
+            p.c.stroke()
+        p.oval(x - s * 0.42, y - s * 0.44, x + s * 0.42, y + s * 0.26, body, a)
+        for side in (-1, 1):  # cachetes del color del ánimo
+            p.circle(x + side * s * 0.25, y + s * 0.06, s * 0.06, col, a * 0.7 * glow)
+        eyes(p, x, y - s * 0.06, s * 0.15, e, mood, INK, lw, now, look)
     elif kind == "gato":
         for side in (-1, 1):  # orejas, con el interior del color del ánimo
             ox = x + side * s * 0.27
@@ -308,6 +343,35 @@ def character(p, kind, x, y, s, mood, now, a=1.0, body="#f2f2f2", look=(0, 0), h
         p.oval(x - s * 0.46, y - s * 0.4, x + s * 0.46, y + s * 0.4, body, a)
         p.rrect(x - s * 0.33, y - s * 0.2, x + s * 0.33, y + s * 0.2, s * 0.2, INK, a)
         eyes(p, x, y, s * 0.15, e, mood, col, lw, now, look)
+
+
+def accessory(p, which, kind, x, y, s, now, a=1.0, accent="#3ddc84"):
+    """Accesorio encima del personaje (las posiciones son aproximadas: sirven para todos)."""
+    top = y - s * (0.42 if kind in ("robot", "burbuja", "pulpo") else 0.36)
+    if which == "phones":  # auriculares: vincha y almohadillas
+        p.c.new_sub_path()
+        p.c.arc(x, y - s * 0.02, s * 0.52, math.pi * 1.08, math.pi * 1.92)
+        p.c.set_line_width(max(1.5, s * 0.07))
+        p.rgba("#2b2b33", a)
+        p.c.stroke()
+        for side in (-1, 1):
+            p.rrect(x + side * s * 0.52 - s * 0.09, y - s * 0.14, x + side * s * 0.52 + s * 0.09, y + s * 0.12,
+                    s * 0.07, accent, a)
+    elif which == "glasses":
+        for side in (-1, 1):
+            p.c.new_sub_path()
+            p.c.arc(x + side * s * 0.16, y - s * 0.02, s * 0.12, 0, 2 * math.pi)
+            p.c.set_line_width(max(1.2, s * 0.045))
+            p.rgba("#16161c", a)
+            p.c.stroke()
+        p.line(x - s * 0.04, y - s * 0.03, x + s * 0.04, y - s * 0.03, "#16161c", a, max(1.2, s * 0.045))
+    elif which == "hat":  # gorro de fiesta con pompón
+        p.poly([(x - s * 0.17, top + s * 0.04), (x + s * 0.17, top + s * 0.04), (x + s * 0.03, top - s * 0.42)], accent, a)
+        for k in (0.35, 0.65):
+            yy = top + s * 0.04 - s * 0.46 * k
+            half = s * 0.17 * (1 - k)
+            p.line(x - half, yy, x + half, yy, "#ffffff", a * 0.8, max(1, s * 0.04))
+        p.circle(x + s * 0.03, top - s * 0.44, s * 0.07, "#ffd166", a)
 
 
 def robot(p, x, y, s, mood, now, a=1.0):
@@ -357,7 +421,8 @@ def album_color(data):
 
 # Bloques de la isla abierta (widgets): nombre, alto. El usuario elige cuáles y en qué orden.
 WIDGETS = {"claude": ("Claude Code", 104), "music": ("Música", 110), "today": ("Hoy: clima, fecha y cita", 58),
-           "system": ("Sistema: CPU, RAM y batería", 52), "stats": ("Tu día: Claude, enfoque y música", 62)}
+           "system": ("Sistema: CPU, RAM y batería", 52), "stats": ("Tu día: Claude, enfoque y música", 62),
+           "gallery": ("Capturas recientes", 84)}
 WIN = (BIG[0] + 90, 6 + sum(h for _name, h in WIDGETS.values()) + 30)  # ventana fija: entra la isla más alta posible
 
 
