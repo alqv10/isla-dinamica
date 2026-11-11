@@ -35,6 +35,11 @@ pythonw island.py
 **Chat con Claude**
 - Pregúntale lo que quieras sin salir de lo que estás haciendo: doble clic en el personaje, clic derecho → *Preguntarle a Claude…*, desde la bandeja o con un atajo propio.
 - Usa tu plan de Claude Code (Pro/Max) con la sesión que ya tienes iniciada: **no hace falta API key**. Claude solo conversa (sin herramientas, no toca archivos) y recuerda la conversación hasta que pulsas *Nueva*.
+- La respuesta aparece mientras Claude la escribe, con formato (negritas, listas, código) y botón *Copiar*.
+- Pega una captura con Ctrl+V (o pulsa *Preguntar* en la tarjeta de captura) para preguntarle por ella.
+
+**Recordatorios**
+- Escribe en el chat "recuérdame en 20 min sacar la ropa", "avísame a las 18:30 que llame a mamá" o "recuérdame mañana a las 9 pagar la luz": la isla te avisa con tarjeta y sonido (con *+10 min* para posponer). Se ven y se borran con clic derecho → Recordatorios.
 
 **Personajes**
 

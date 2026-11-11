@@ -95,6 +95,18 @@ mons = [{"name": "A", "x": 0, "y": 0, "w": 2560, "h": 1440, "scale": 1.0, "prima
 assert island.pick_monitor(mons, "mouse", (3000, 500))["name"] == "B"
 assert island.pick_monitor(mons, "B", (0, 0))["name"] == "B"
 assert island.pick_monitor(mons, "desconectada", (0, 0))["name"] == "A"  # vuelve a la principal
+import recordatorios  # noqa: E402
+from datetime import datetime as dt  # noqa: E402
+now = dt(2026, 11, 10, 17, 0)
+for text, hhmm, day, what in [("recuérdame en 20 min sacar la ropa", "17:20", 10, "sacar la ropa"),
+                              ("avísame a las 18:30 que llame a mamá", "18:30", 10, "llame a mamá"),
+                              ("recuérdame mañana a las 9 pagar la luz", "09:00", 11, "pagar la luz"),
+                              ("recuérdame a las 9 desayunar", "09:00", 11, "desayunar"),
+                              ("remind me in 2 hours to stretch", "19:00", 10, "stretch")]:
+    when, got = recordatorios.parse(text, now)
+    assert (when.strftime("%H:%M"), when.day, got) == (hhmm, day, what), (text, when, got)
+assert recordatorios.parse("sacar la ropa en 20 min", now) is None  # no es un recordatorio: va a Claude
+assert recordatorios.parse("recuérdame algo", now) is None  # sin hora
 f = island.Focus()  # pomodoro: 25 de enfoque, 5 de descanso, 15 cada 4 rondas
 f.start()
 phases = []

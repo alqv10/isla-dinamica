@@ -78,6 +78,33 @@ EN = {
         "Claude didn't answer. Are you signed in to Claude Code?",
     "Claude tardó demasiado en responder.": "Claude took too long to answer.",
     "No se pudo hablar con Claude: {error}": "Couldn't reach Claude: {error}",
+    # recordatorios
+    "Nuevo recordatorio…": "New reminder…", "Recuérdame ": "Remind me ", "Recordatorios": "Reminders",
+    "mañana ": "tomorrow ", "Listo: te aviso {day}a las {time}: {what}": "Done: I'll remind you {day}at {time}: {what}",
+    "Recordatorio · {time}": "Reminder · {time}", "+10 min": "+10 min",
+    "Borrar: {day}{time} · {what}": "Delete: {day}{time} · {what}", "No hay recordatorios": "No reminders",
+    # tour
+    "Ver el tour otra vez": "Show the tour again", "Saltar": "Skip", "¡Listo!": "Got it!",
+    "Siguiente {n}/{total}": "Next {n}/{total}",
+    "¡Hola! Soy tu isla": "Hi! I'm your island",
+    "Pasa el mouse por encima para ver más: música, Claude Code, clima…":
+        "Hover over me to see more: music, Claude Code, weather…",
+    "Clic derecho = ajustes": "Right-click = settings",
+    "Personaje, colores, modo, qué mostrar, atajos e idioma.": "Character, colors, mode, what to show, shortcuts and language.",
+    "Gestos": "Gestures",
+    "Sobre la música: desliza para cambiar de canción. La rueda del mouse cambia el volumen.":
+        "Over the music: swipe to change songs. The mouse wheel changes the volume.",
+    "Doble clic en mí": "Double-click me",
+    "Para preguntarle algo a Claude, o escribir \"recuérdame en 20 min…\".":
+        "To ask Claude something, or type \"remind me in 20 min…\".",
+    "Mostrar u ocultar": "Show or hide",
+    "Con {hotkey} o con el robot de la bandeja, junto al reloj de Windows.":
+        "With {hotkey} or the robot in the tray, next to the Windows clock.",
+    # chat completo
+    "Copiar": "Copy", "Copiado.": "Copied.", "Preguntar": "Ask", "¿Qué ves en esta captura?": "What do you see in this screenshot?",
+    "Enter envía · Ctrl+V pega una captura · Esc cierra": "Enter sends · Ctrl+V pastes a screenshot · Esc closes",
+    "+ {n} captura(s) adjunta(s) · clic para quitar": "+ {n} screenshot(s) attached · click to remove",
+    "  (+ {n} captura(s))": "  (+ {n} screenshot(s))",
     # menú y bandeja
     "Mostrar / ocultar": "Show / hide", "Ajustes…": "Settings…", "Salir": "Quit", "Ocultar": "Hide",
     "Empezar enfoque (25 + 5 min)": "Start focus (25 + 5 min)", "Terminar enfoque": "Stop focus",

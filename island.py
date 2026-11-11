@@ -45,7 +45,9 @@ DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications"
             "widgets": ["claude", "music"],
             # atajos: en teclados en español Ctrl+Alt = AltGr, por eso solo uno viene puesto
             "hotkeys": {"toggle": "Ctrl+Alt+I", "focus": "", "play": "", "settings": "", "chat": ""},
-            "language": "auto"}  # "auto" (el de Windows), "es" o "en"  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
+            "language": "auto",  # "auto" (el de Windows), "es" o "en"
+            "reminders": [],  # [{"at": segundos epoch, "text": "sacar la ropa"}]
+            "tour_done": False}  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
 
 
 STARTUP = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/Isla dinamica.lnk"
@@ -149,8 +151,18 @@ class Hotkeys:
         return self.failed
 
 
+TOUR = [  # primer uso: tarjetas que explican la isla, una por una
+    ("¡Hola! Soy tu isla", "Pasa el mouse por encima para ver más: música, Claude Code, clima…"),
+    ("Clic derecho = ajustes", "Personaje, colores, modo, qué mostrar, atajos e idioma."),
+    ("Gestos", "Sobre la música: desliza para cambiar de canción. La rueda del mouse cambia el volumen."),
+    ("Doble clic en mí", "Para preguntarle algo a Claude, o escribir \"recuérdame en 20 min…\"."),
+    ("Mostrar u ocultar", "Con {hotkey} o con el robot de la bandeja, junto al reloj de Windows."),
+]
+
+
 class Island:
     def __init__(self):
+        first_run = not CONFIG.exists()
         self.cfg = load_config()
         dpi_scale()  # pide píxeles reales a Windows (antes de medir pantallas)
         self.mon = pick_monitor(monitors(), self.cfg["monitor"], self.pointer())
@@ -207,6 +219,9 @@ class Island:
         self.build_menu()
         self.settings, self.settings_requested = None, False  # ventana de ajustes (ajustes.py)
         self.chat = None  # panel de chat con Claude (chat.py)
+        self.tour = None  # paso del tour de primer uso, o None
+        if first_run and not self.cfg["tour_done"]:
+            root.after(2500, self.start_tour)
         self.tray = start_tray(self.toggle, self.request_quit, self.request_settings,
                                lambda: self.actions.append("chat"))
         self.actions = []  # acciones pedidas desde otros hilos (atajos): se hacen en el próximo tick
@@ -344,6 +359,9 @@ class Island:
         font = ("Segoe UI", 10)
         m = self.menu = tk.Menu(self.root, tearoff=0, font=font)
         m.add_command(label=_("Preguntarle a Claude…"), command=self.open_chat)
+        m.add_command(label=_("Nuevo recordatorio…"), command=lambda: self.open_chat(_("Recuérdame ")))
+        self.reminders_menu = tk.Menu(m, tearoff=0, font=font, postcommand=self.fill_reminders_menu)
+        m.add_cascade(label=_("Recordatorios"), menu=self.reminders_menu)
         m.add_command(label=_("Ajustes…"), command=self.open_settings)
         m.add_command(label=_("Empezar enfoque (25 + 5 min)"), command=self.toggle_focus)
         self.focus_item = m.index("end")
@@ -394,6 +412,7 @@ class Island:
                           command=lambda: set_startup(self.vars["startup"].get()))
         check(m, "updates", _("Buscar actualizaciones"))
         m.add_separator()
+        m.add_command(label=_("Ver el tour otra vez"), command=self.start_tour)
         m.add_command(label=_("Ver registro de errores"), command=self.open_log)
         m.add_command(label=_("Ocultar"), accelerator=self.cfg["hotkeys"].get("toggle", ""), command=self.toggle)
         self.hide_item = m.index("end")
@@ -462,13 +481,85 @@ class Island:
         self.set("hotkeys", {**self.cfg["hotkeys"], action: text})
         return action not in self.hotkeys.apply(self.cfg["hotkeys"])
 
-    def open_chat(self):
+    def open_chat(self, text="", image=None):
         if self.chat:
             self.chat.top.lift()
             self.chat.entry.focus_force()
+            if image is not None:
+                self.chat.attach(image)
             return
         from chat import ChatPanel
-        self.chat = ChatPanel(self)
+        self.chat = ChatPanel(self, text, image)
+
+    # --- recordatorios ---
+
+    def reminder_from_text(self, text):
+        """Si el texto del chat es un recordatorio, lo guarda y devuelve la confirmación; si no, None."""
+        import recordatorios
+        parsed = recordatorios.parse(text)
+        if not parsed:
+            return None
+        when, what = parsed
+        self.set("reminders", sorted(self.cfg["reminders"] + [{"at": when.timestamp(), "text": what}],
+                                     key=lambda r: r["at"]))
+        day = "" if when.date() == datetime.now().date() else _("mañana ")
+        return _("Listo: te aviso {day}a las {time}: {what}", day=day, time=when.strftime("%H:%M"), what=what)
+
+    def check_reminders(self, now):
+        due = [r for r in self.cfg["reminders"] if r["at"] <= now]
+        if not due:
+            return
+        self.set("reminders", [r for r in self.cfg["reminders"] if r["at"] > now])
+        for r in due:
+            def snooze(r=r, card=None):
+                self.set("reminders", sorted(self.cfg["reminders"] + [{"at": time.time() + 600, "text": r["text"]}],
+                                             key=lambda x: x["at"]))
+                self.card["until"] = 0
+            self.card = {"kind": "reminder", "icon": "bell", "title": r["text"],
+                         "body": _("Recordatorio · {time}", time=datetime.fromtimestamp(r["at"]).strftime("%H:%M")),
+                         "until": now + 60, "buttons": [(_("+10 min"), snooze, False),
+                                                       (_("Listo"), lambda: self.card.update(until=0), True)]}
+        self.celebrate_t = now
+        if self.cfg["sound"]:
+            winsound.MessageBeep(winsound.MB_ICONEXCLAMATION)
+
+    def fill_reminders_menu(self):
+        """Submenú con los recordatorios pendientes (clic = borrarlo)."""
+        m = self.reminders_menu
+        m.delete(0, "end")
+        for r in self.cfg["reminders"]:
+            when = datetime.fromtimestamp(r["at"])
+            day = "" if when.date() == datetime.now().date() else _("mañana ")
+            m.add_command(label=_("Borrar: {day}{time} · {what}", day=day, time=when.strftime("%H:%M"), what=r["text"]),
+                          command=lambda r=r: self.set("reminders", [x for x in self.cfg["reminders"] if x is not r]))
+        if not self.cfg["reminders"]:
+            m.add_command(label=_("No hay recordatorios"), state="disabled")
+
+    # --- tour de primer uso ---
+
+    def start_tour(self):
+        self.tour = 0
+        self.show_tour_step()
+
+    def show_tour_step(self):
+        title, body = TOUR[self.tour]
+        last = self.tour == len(TOUR) - 1
+        self.card = {"kind": "tour", "icon": "tour", "title": _(title),
+                     "body": _(body, hotkey=self.cfg["hotkeys"].get("toggle") or "—") if "{hotkey}" in body else _(body),
+                     "until": float("inf"),
+                     "buttons": ([] if last else [(_("Saltar"), self.end_tour, False)]) +
+                                [(_("¡Listo!") if last else _("Siguiente {n}/{total}", n=self.tour + 1, total=len(TOUR)),
+                                  self.end_tour if last else self.next_tour_step, True)]}
+
+    def next_tour_step(self):
+        self.tour += 1
+        self.show_tour_step()
+
+    def end_tour(self):
+        self.tour = None
+        if self.card and self.card["kind"] == "tour":
+            self.card["until"] = 0
+        self.set("tour_done", True)
 
     def reopen_settings(self):
         if self.settings:
@@ -653,7 +744,10 @@ class Island:
             path.write_bytes(data)
             os.startfile(path)
             card["until"] = 0
-        card["buttons"] = [(_("Abrir"), open_, False), (_("Guardar"), save, True)]
+        def ask():
+            card["until"] = 0
+            self.open_chat(_("¿Qué ves en esta captura?"), Image.open(io.BytesIO(data)))
+        card["buttons"] = [(_("Preguntar"), ask, False), (_("Abrir"), open_, False), (_("Guardar"), save, True)]
         self.card = card
 
     def check_privacy(self):
@@ -702,6 +796,8 @@ class Island:
             self.card["until"] = 0
 
     def device_card(self, icon, title, body, action=None):
+        if self.tour is not None:
+            return  # durante el tour no se interrumpe
         self.card = {"kind": "device", "icon": icon, "title": title, "body": body, "action": action,
                      "until": time.time() + 5}
 
@@ -757,6 +853,7 @@ class Island:
             self.follow_monitor()
             self.check_devices(now)
             self.check_privacy()
+            self.check_reminders(now)
             self.idle = idle_seconds()
         left = self.timer.left()
         if left is not None and left <= 0:
@@ -784,6 +881,8 @@ class Island:
         if note and hover and self.mode == "note":
             note["until"] = max(note["until"], now + 1)  # no se va mientras la lees
         self.check_cards(now)
+        if self.tour is not None and (not self.card or self.card["kind"] != "tour"):
+            self.show_tour_step()  # otra tarjeta pisó el tour: vuelve
         if self.reply_box and (self.claude.reply is not self.reply_box[1] or self.reply_box[1].get("cancel")):
             self.close_reply_box(None)  # Claude ya siguió (respondiste en la terminal o se acabó el tiempo)
         card = self.card if self.card and now < self.card["until"] else None
@@ -807,7 +906,9 @@ class Island:
             mode = "small"
         self.mode = mode
         big = self.big_size()
-        target = {"perm": PERM, "chat": PERM, "level": LEVEL, "note": NOTIF, "card": NOTIF, "big": big, "small": SMALL}[mode]
+        card_size = (520, 92) if card and card["kind"] == "tour" else NOTIF  # el tour lleva más texto
+        target = {"perm": PERM, "chat": PERM, "level": LEVEL, "note": NOTIF, "card": card_size, "big": big,
+                  "small": SMALL}[mode]
         # resorte amortiguado: se pasa un poquito y vuelve, como en el iPhone
         self.vw = self.vw * 0.7 + (target[0] - self.w) * 0.1
         self.vh = self.vh * 0.7 + (target[1] - self.h) * 0.1
@@ -1060,6 +1161,17 @@ class Island:
         if not buttons:  # clic = la acción de la tarjeta (abrir el USB…) y se cierra
             act = card.get("action")
             self.hit(0, 0, w, h, lambda: (act and act(), card.update(until=0)))
+        if kind == "tour":  # texto en hasta tres líneas, a la izquierda de los botones
+            p.text(x, 20, p.fit(title, "title", right - x - 8), "title", WHITE, a)
+            words, lines = body.split(), [""]
+            for word in words:
+                if p.width((lines[-1] + " " + word).strip(), "small") > right - x - 8 and lines[-1]:
+                    lines.append(word)
+                else:
+                    lines[-1] = (lines[-1] + " " + word).strip()
+            for i, line in enumerate(lines[:3]):
+                p.text(x, 40 + i * 15, line, "small", "#c8c8cc", a)
+            return
         p.text(x, 23, p.fit(title, "title", right - x - 8), "title", WHITE, a)
         p.text(x, 42, p.fit(body, "small", right - x - 8), "small", "#c8c8cc", a)
 
@@ -1089,6 +1201,17 @@ class Island:
             c.set_line_width(2)
             p.rgba(col, a)
             c.stroke()
+        elif kind == "bell":  # campana
+            c.new_sub_path()
+            c.arc(cx, cy - 2, 8, math.pi, 2 * math.pi)
+            c.line_to(cx + 8, cy + 6)
+            c.line_to(cx - 8, cy + 6)
+            c.close_path()
+            p.rgba(WHITE, a)
+            c.fill()
+            p.circle(cx, cy + 9, 2.6, col, a)
+        elif kind == "tour":
+            self.char(p, cx, cy + 3, 26, "happy", time.time(), a)
         elif kind == "mic":
             p.rrect(cx - 4.5, cy - 11, cx + 4.5, cy + 3, 4.5, PRIVACY["microphone"], a)
             c.new_sub_path()
@@ -1173,7 +1296,7 @@ class Island:
         title = _("Claude está pensando…") if busy else _("Pregúntale a Claude")
         p.text(52, h / 2, title, "title", MOODS["focused"] if busy else WHITE, a)
         right = w - 16
-        for label, act in ((_("×"), self.chat.close), (_("Nueva"), self.chat.new)):
+        for label, act in ((_("×"), self.chat.close), (_("Nueva"), self.chat.new), (_("Copiar"), self.chat.copy_last)):
             bw = p.width(label, "btn") + 22
             p.rrect(right - bw, h / 2 - 13, right, h / 2 + 13, 13, "#2a2a30", a)
             p.text(right - bw / 2, h / 2, label, "btn", WHITE, a, anchor="center")
@@ -1229,6 +1352,10 @@ class Island:
             mins = self.minutes_to_event()
             when = _("en {mins} min", mins=mins) if mins is not None and mins < 60 else nxt[1].strftime("%H:%M")
             p.text(x, 40, p.fit(f"{when} · {nxt[0]}", "small", w - x - 22), "small", self.accent, a)
+        elif self.cfg["reminders"]:  # sin citas: el próximo recordatorio
+            r = self.cfg["reminders"][0]
+            p.text(x, 40, p.fit(f"{datetime.fromtimestamp(r['at']):%H:%M} · {r['text']}", "small", w - x - 22), "small",
+                   self.accent, a)
         else:
             p.text(x, 40, _("Sin citas por hoy"), "small", GREY, a)
 
