@@ -65,6 +65,7 @@ Robot, Chispa, Burbuja, Gato, Zorro o Pulpo, en seis colores, con accesorios que
 - Color de acento, modo translúcido y tres tamaños. Nítida en pantallas con escala 125–200 %.
 - Animaciones: confeti cuando Claude termina, ondas al tocar botones y transiciones suaves entre tarjetas.
 - Modo noche (de 22 a 7 la isla se oscurece) y recordatorio para descansar la vista cada 20 minutos (20-20-20).
+- Atajos de apps: botones con el ícono real de tus programas, carpetas o webs favoritas.
 - Galería con tus últimas 8 capturas: cópialas otra vez, ábrelas o pregúntale a Claude por ellas.
 - Fondos: negro, vidrio, aurora (colores que se mueven) o con el color de la carátula que suena.
 - Elige qué bloques se ven en la isla abierta (Claude Code, música, hoy, sistema, tu día) y en qué orden.
@@ -78,6 +79,10 @@ Robot, Chispa, Burbuja, Gato, Zorro o Pulpo, en seis colores, con accesorios que
 - Mostrar u ocultar: clic en el robot de la bandeja de Windows o **Ctrl+Alt+I**. Oculta, los permisos se responden en la terminal.
 - **Ajustes** (clic derecho → Ajustes…, o desde la bandeja): personaje con vista previa, colores, modo, tamaño, en qué pantalla aparece (también puede seguir al mouse) y qué mostrar. Los cambios se ven al instante.
 - La isla nunca te saca de la aplicación en la que estás.
+
+## Rendimiento
+
+Usándola consume alrededor del 2 % de un núcleo de CPU; si te alejas de la PC baja a menos del 1 %, y con la PC bloqueada casi no hace nada.
 
 ## Privacidad
 

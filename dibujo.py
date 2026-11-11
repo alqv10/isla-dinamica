@@ -431,7 +431,7 @@ def album_color(data):
 # Bloques de la isla abierta (widgets): nombre, alto. El usuario elige cuáles y en qué orden.
 WIDGETS = {"claude": ("Claude Code", 104), "music": ("Música", 110), "today": ("Hoy: clima, fecha y cita", 58),
            "system": ("Sistema: CPU, RAM y batería", 52), "stats": ("Tu día: Claude, enfoque y música", 62),
-           "gallery": ("Capturas recientes", 84)}
+           "gallery": ("Capturas recientes", 84), "apps": ("Atajos de apps", 80)}
 WIN = (BIG[0] + 90, 6 + sum(h for _name, h in WIDGETS.values()) + 30)  # ventana fija: entra la isla más alta posible
 
 

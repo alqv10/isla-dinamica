@@ -107,6 +107,9 @@ for text, hhmm, day, what in [("recuérdame en 20 min sacar la ropa", "17:20", 1
     assert (when.strftime("%H:%M"), when.day, got) == (hhmm, day, what), (text, when, got)
 assert recordatorios.parse("sacar la ropa en 20 min", now) is None  # no es un recordatorio: va a Claude
 assert recordatorios.parse("recuérdame algo", now) is None  # sin hora
+import accesos  # noqa: E402
+assert accesos.display_name("https://www.youtube.com/feed") == "Youtube" and accesos.is_web("https://x.com")
+assert accesos.display_name("C:/Programas/mi-app.exe") == "mi app" and not accesos.is_web("C:/x")
 f = island.Focus()  # pomodoro: 25 de enfoque, 5 de descanso, 15 cada 4 rondas
 f.start()
 phases = []

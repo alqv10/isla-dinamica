@@ -50,7 +50,8 @@ DEFAULTS = {"size": 1.0, "sound": True, "hide_fullscreen": True, "notifications"
             "tour_done": False,
             "accessories": True, "unlocked": [],
             "night": True,  # de 22 a 7 la isla se oscurece y se pone más cálida
-            "eye_rest": True}  # regla 20-20-20: cada 20 min de uso, mirar lejos 20 s  # accesorios que se ganan con el uso (ver dibujo.ACCESSORIES)  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
+            "eye_rest": True,
+            "apps": []}  # atajos de apps: [{"target": "C:/…/Spotify.exe" | carpeta | https://…, "name": "Spotify"}]  # regla 20-20-20: cada 20 min de uso, mirar lejos 20 s  # accesorios que se ganan con el uso (ver dibujo.ACCESSORIES)  # bloques de la isla abierta, en orden (ver dibujo.WIDGETS)
 
 
 STARTUP = Path(os.environ.get("APPDATA", "")) / "Microsoft/Windows/Start Menu/Programs/Startup/Isla dinamica.lnk"
@@ -223,6 +224,7 @@ class Island:
         self.active_secs = 0  # segundos seguidos usando la PC (para el descanso de la vista)
         self.gallery_dir = Path(os.environ.get("LOCALAPPDATA", Path.home())) / "IslaDinamica" / "capturas"
         self.thumbs = {}  # archivo -> superficie de la miniatura
+        self.app_icons = {}  # atajo -> superficie de su ícono (None = sin ícono: se dibuja uno)
         self.particles, self.ripples = [], []  # confeti (Claude terminó) y ondas (clic en un botón)
         self.enter_t, self.last_char = -9.0, (24, 17)  # cuándo se abrió la isla; dónde está el personaje
         self.drag_dx = self.drag_vis = 0.0  # cuánto se arrastró / cuánto se ve corrido el contenido
@@ -940,6 +942,94 @@ class Island:
             c.restore()
             self.hit(x, 26, x + size, 26 + size, lambda f=f: self.gallery_card(f))
             x += size + 8
+
+    # --- atajos de apps ---
+
+    def draw_apps(self, w, a):
+        import accesos
+        p, c = self.p, self.p.c
+        x, size = 22, 40
+        for app in self.cfg["apps"]:
+            if x + size > w - 22 - size:
+                break
+            target = app["target"]
+            p.rrect(x, 8, x + size, 8 + size, 11, "#1f1f23", a)
+            if target not in self.app_icons:
+                png = accesos.icon_png(target)
+                self.app_icons[target] = art_surface(png, round(32 * self.S * 2))[0] if png else None
+            surf = self.app_icons[target]
+            if surf:  # el ícono real de Windows
+                c.save()
+                c.translate(x + 4, 12)
+                c.scale(32 / surf.get_width(), 32 / surf.get_width())
+                c.set_source_surface(surf, 0, 0)
+                c.get_source().set_filter(cairo.FILTER_GOOD)
+                c.paint_with_alpha(clamp(a))
+                c.restore()
+            else:  # web: un globo
+                cx, cy = x + size / 2, 8 + size / 2
+                c.new_sub_path()
+                c.arc(cx, cy, 11, 0, 2 * math.pi)
+                c.set_line_width(1.8)
+                p.rgba(self.accent, a)
+                c.stroke()
+                p.line(cx - 11, cy, cx + 11, cy, self.accent, a, 1.4)
+                c.save()
+                c.translate(cx, cy)
+                c.scale(0.45, 1)
+                c.new_sub_path()
+                c.arc(0, 0, 11, 0, 2 * math.pi)
+                c.restore()
+                c.set_line_width(1.4)
+                c.stroke()
+            p.text(x + size / 2, 62, p.fit(app["name"], "tiny", size + 12), "tiny", GREY, a, anchor="center")
+            self.hit(x, 4, x + size, 70, lambda t=target: accesos.launch(t))
+            x += size + 16
+        p.rrect(x, 8, x + size, 8 + size, 11, "#1a1a1e", a)  # "+" para agregar
+        p.line(x + size / 2, 20, x + size / 2, 36, GREY, a, 2)
+        p.line(x + 12, 28, x + size - 12, 28, GREY, a, 2)
+        if not self.cfg["apps"]:
+            p.text(x + size + 14, 28, _("Agrega tus apps, carpetas o webs favoritas"), "small", "#5a5a60", a)
+        self.hit(x, 4, x + size, 70, self.add_app_menu)
+
+    def add_app_menu(self):
+        m = tk.Menu(self.root, tearoff=0, font=("Segoe UI", 10))
+        m.add_command(label=_("Programa…"), command=lambda: self.add_app("program"))
+        m.add_command(label=_("Carpeta…"), command=lambda: self.add_app("folder"))
+        m.add_command(label=_("Sitio web…"), command=lambda: self.add_app("web"))
+        x, y = self.pointer()
+        self.keep_open_until = time.time() + 30
+        m.tk_popup(x, y)
+
+    def add_app(self, kind):
+        """Pide el programa, la carpeta o la web y lo agrega a los atajos (y muestra el bloque si no estaba)."""
+        import accesos
+        from tkinter import filedialog, simpledialog
+        parent = self.settings.top if self.settings else self.root
+        self.keep_open_until = time.time() + 60
+        if kind == "program":
+            target = filedialog.askopenfilename(parent=parent, title=_("Elige un programa"),
+                                                filetypes=[(_("Programas"), "*.exe *.lnk"), (_("Todos"), "*.*")])
+        elif kind == "folder":
+            target = filedialog.askdirectory(parent=parent, title=_("Elige una carpeta"))
+        else:
+            target = simpledialog.askstring(_("Sitio web"), _("Dirección (por ejemplo youtube.com):"), parent=parent)
+            if target and not accesos.is_web(target):
+                target = "https://" + target.strip()
+        self.keep_open_until = time.time() + 6
+        if not target:
+            return
+        target = str(Path(target)) if not accesos.is_web(target) else target.strip()
+        if any(app["target"] == target for app in self.cfg["apps"]):
+            return
+        self.set("apps", self.cfg["apps"] + [{"target": target, "name": accesos.display_name(target)}])
+        if "apps" not in self.cfg["widgets"]:
+            self.set("widgets", self.cfg["widgets"] + ["apps"])
+        if self.settings:
+            self.settings.refresh()
+
+    def remove_app(self, target):
+        self.set("apps", [app for app in self.cfg["apps"] if app["target"] != target])
 
     def gallery_card(self, path):
         try:
@@ -1693,7 +1783,7 @@ class Island:
                 self.hit_dy = top
                 {"claude": lambda: self.draw_claude(w, now, mood, a), "today": lambda: self.draw_today(w, a),
                  "system": lambda: self.draw_system(w, a), "stats": lambda: self.draw_stats(w, a),
-                 "gallery": lambda: self.draw_gallery(w, a)}[b]()
+                 "gallery": lambda: self.draw_gallery(w, a), "apps": lambda: self.draw_apps(w, a)}[b]()
                 self.hit_dy = 0
             c.restore()
 

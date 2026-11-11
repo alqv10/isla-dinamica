@@ -107,6 +107,11 @@ class Settings:
                     lambda v: self.change("accessories", v))
         self.switch(_("Iniciar con Windows"), lambda: island.STARTUP.exists(), self.set_startup)
 
+        self.section(_("Atajos de apps"))
+        self.apps_box = tk.Frame(self.col, bg=BG)
+        self.apps_box.pack(fill="x", padx=round(22 * k))
+        self.refreshers.append(self.build_apps)
+
         self.section(_("Atajos de teclado"))
         self.capturing = None  # acción cuyo atajo se está grabando
         self.hotkey_labels = {}
@@ -288,6 +293,28 @@ class Settings:
             else:
                 return  # solo un modificador, o una tecla sin Ctrl/Alt: seguir esperando
         self.refresh_hotkeys()
+
+    def build_apps(self):
+        """Lista de atajos de apps (× para quitar) y botones para agregar."""
+        k, box = self.k, self.apps_box
+        for child in box.winfo_children():
+            child.destroy()
+        for app in self.cfg["apps"]:
+            r = tk.Frame(box, bg=CARD)
+            r.pack(fill="x", pady=round(2 * k))
+            tk.Label(r, text=app["name"], font=("Segoe UI", 10), bg=CARD, fg=FG).pack(side="left", padx=round(10 * k),
+                                                                                    pady=round(4 * k))
+            tk.Label(r, text=app["target"][-38:], font=("Segoe UI", 8), bg=CARD, fg=DIM).pack(side="left")
+            x = tk.Label(r, text="×", font=("Segoe UI", 11), bg=CARD, fg=DIM, cursor="hand2", padx=round(10 * k))
+            x.pack(side="right")
+            x.bind("<Button-1>", lambda e, t=app["target"]: (self.isl.remove_app(t), self.refresh()))
+        add = tk.Frame(box, bg=BG)
+        add.pack(fill="x", pady=(round(4 * k), 0))
+        for label, kind in ((_("+ Programa"), "program"), (_("+ Carpeta"), "folder"), (_("+ Sitio web"), "web")):
+            b = tk.Label(add, text=label, font=("Segoe UI", 9), bg=CARD, fg=FG, cursor="hand2", padx=round(10 * k),
+                         pady=round(3 * k))
+            b.pack(side="left", padx=(0, round(6 * k)))
+            b.bind("<Button-1>", lambda e, kind=kind: self.isl.add_app(kind))
 
     def set_widgets(self, order):
         if order:  # al menos un bloque

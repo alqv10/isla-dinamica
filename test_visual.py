@@ -146,6 +146,13 @@ for i, col in enumerate([(220, 80, 60), (60, 140, 220), (90, 200, 120)]):
     (isl.gallery_dir / f"cap-20261110-1{i}0000.png").write_bytes(b.getvalue())
 check("galeria", "big", isl.big_size())
 check("tarjeta-galeria", "card", island.NOTIF, lambda: isl.gallery_card(isl.gallery()[0]))
+isl.cfg["widgets"] = ["apps", "music"]
+check("atajos-vacio", "big", isl.big_size())
+import shutil as _sh  # noqa: E402
+isl.cfg["apps"] = [{"target": _sh.which("notepad.exe") or "C:/Windows/notepad.exe", "name": "Bloc de notas"},
+                   {"target": str(Path.home()), "name": "Inicio"}, {"target": "https://github.com", "name": "Github"}]
+check("atajos", "big", isl.big_size())
+isl.cfg["apps"] = []
 isl.cfg["widgets"] = ["claude", "music"]
 check("tarjeta-ojos", "card", island.NOTIF, lambda: (setattr(isl, "card", None), setattr(isl, "active_secs", 99999),
                                                       setattr(isl, "idle", 0), isl.check_eye_rest()))

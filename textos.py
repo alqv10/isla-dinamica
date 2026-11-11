@@ -134,6 +134,12 @@ EN = {
     "Capturas recientes": "Recent screenshots",
     "Las capturas que copies (Win+Shift+S) aparecerán aquí.": "Screenshots you copy (Win+Shift+S) will show up here.",
     "Captura del {when}": "Screenshot from {when}", "Copiada: pégala con Ctrl+V": "Copied: paste it with Ctrl+V",
+    # atajos de apps
+    "Atajos de apps": "App shortcuts", "Agrega tus apps, carpetas o webs favoritas": "Add your favorite apps, folders or sites",
+    "Programa…": "Program…", "Carpeta…": "Folder…", "Sitio web…": "Website…", "Elige un programa": "Choose a program",
+    "Programas": "Programs", "Todos": "All", "Elige una carpeta": "Choose a folder", "Sitio web": "Website",
+    "Dirección (por ejemplo youtube.com):": "Address (for example youtube.com):",
+    "+ Programa": "+ Program", "+ Carpeta": "+ Folder", "+ Sitio web": "+ Website",
     # menú y bandeja
     "Mostrar / ocultar": "Show / hide", "Ajustes…": "Settings…", "Salir": "Quit", "Ocultar": "Hide",
     "Empezar enfoque (25 + 5 min)": "Start focus (25 + 5 min)", "Terminar enfoque": "Stop focus",
